@@ -1,0 +1,1 @@
+some cool css stuff (maybe use it for project menu): https://github.com/you-dont-need/You-Dont-Need-JavaScript#Accordion
