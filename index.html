@@ -5,16 +5,16 @@ title: Home
 
 <article style="padding-top: 0;">
   
-  <section style="margin-bottom: 2rem;">
+  <section style="margin-bottom: 0;">
     <h1 style="color: #2d3748; font-weight: normal; margin-top: 1rem; margin-bottom: 1rem;">nyrkov</h1>
     <p>This is the website of Ilya Nyrkov. Notes on machine learning, cloud infrastructure, and systems programming.</p>
   </section>
 
-  <section>
-    <ul style="list-style-type: disc;">
+  <section style="padding-top: 0;">
+    <ul style="list-style-type: disc; margin-top: 0;">
       {% for post in site.posts %}
         <li style="margin-bottom: 2.5rem;">
-          <h2 style="font-style: normal; margin-bottom: 0.5rem; line-height: 1.2;">
+          <h2 style="font-style: normal; margin-top: 0.5rem; margin-bottom: 0.5rem; line-height: 1.2;">
             <a href="{{ post.url }}" style="text-decoration: none;">
               {{ post.title }}
             </a>
