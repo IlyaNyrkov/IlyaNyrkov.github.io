@@ -1,0 +1,21 @@
+# -----------------------
+# Site Settings
+# -----------------------
+title: "NYRKOV"
+author: "Ilya Nyrkov"
+email: "ilya.nyrkov@gmail.com"
+description: "A blog about programming, machine learning, and optimization."
+
+# The base hostname & protocol for your site
+url: "https://nyrkov.github.io" 
+
+# -----------------------
+# Build Settings
+# -----------------------
+# How your URLs will look. 'pretty' removes the .html extension
+permalink: pretty 
+
+# Folders you want Jekyll to ignore when building
+exclude:
+  - README.md
+  - .gitignore
