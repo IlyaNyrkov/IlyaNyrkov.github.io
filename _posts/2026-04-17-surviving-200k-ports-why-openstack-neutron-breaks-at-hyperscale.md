@@ -4,6 +4,8 @@ title: "Surviving 200,000 Ports: Why OpenStack Neutron Breaks at Hyperscale"
 ---
 In this post, we talk about different SDNs, decisions behind them and neutron problems and how to solve them.
 
+This outage happened two times, one few years before I joined VK. Another when I was solution architect at vk after which I pushed migration to new proprietary SDN by developing tools, migration strategies and working with biggest clients. Migration to sprut made client safe and for others if full sync (god forbid) happens again it will be less detrimental. Now vk is fully using sprut and it works perfectly. To my knowledge VK did not suffer any outges since I left.
+
 ## I. Reality of building scalable clouds
 
 Cloud computing is everywhere these days. The majority prefer hyperscalers, while others go for local or custom solutions. Building a cloud from scratch is a long, demanding project, so many opt for ready-to-go platforms where the groundwork is done, like OpenStack. While OpenStack is a monumental open-source achievement, it is fundamentally better suited for private clouds. In a public cloud at hyperscale, you hit hard limits.
@@ -92,6 +94,19 @@ Explain how sprut works in more details and it's architecture which exactly does
 - Highlight the transition: Instead of a heavy central controller pushing massive state via RabbitMQ, modern systems separate the control plane into lightweight, distributed services that constantly poll their "Target State" vs. "Actual State" via HTTP REST APIs.
 
 - ovn architectures
+
+### Modern SDN design
+(reference first diagram c)
+
+### New Openstack standard: OVN
+
+[!alt text](assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/ovn_arch.png)
+
+### Proprietary solution: Sprut
+
+Developed by VK cloud
+- reasons why separate soluion was used instead of OVN
+- developed for few years before I joined vk I lead large scale migration to new SDN and had to figure out how it worked in details.
 
 ## VI. Conclusion and key takeaways
 
