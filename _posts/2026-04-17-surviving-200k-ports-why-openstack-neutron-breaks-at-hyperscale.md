@@ -46,18 +46,31 @@ Without SDN, virtual machines spin up in seconds, but the network takes hours or
 
 ## III. Neutron architecture: Design and Scaling Considerations
 
-The architecture of OpenStack Neutron has its distinct advantages, having been originally designed to provide network-as-a-service for private clouds and enterprise environments. In these environments-typically involving a moderate number of hypervisors-its design works well to abstract complex networking. However, in large-scale public cloud deployments, the architecture faces significant scaling challenges. A core structural issue at scale is its heavy reliance on a centralized control plane communicating over a single message queue system (RabbitMQ) to synchronize state across hundreds or thousands of distributed agents.
+The architecture of OpenStack Neutron has distinct advantages, as it was originally designed to provide network-as-a-service for private clouds and enterprise environments. In deployments with a moderate number of hypervisors, its design works brilliantly to abstract complex networking.
 
-### Neutron architecture
+Fundamentally, Neutron is not a custom packet-forwarding engine. It is essentially a distributed set of Python daemons that act as a "glue" layer. It ties together and orchestrates existing, battle-tested Linux networking tools-like Open vSwitch (OVS), iptables, network namespaces (netns), and dnsmasq. Because it is open-source and modular, it is highly extensible and relatively easy to understand. However, to tie all these disparate tools together, Neutron relies on centralized coordination.
+
+At hyperscale, this architecture faces severe challenges. Its core structural vulnerability is a heavy reliance on a single message queue system (RabbitMQ) to synchronize imperative state commands across thousands of distributed agents.
+
+### The Component Layers of Neutron
 
 ![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_arch.png)
 
-The Neutron architecture is separated into distinct layers: 
-1. **Controller Layer**: The Neutron API receives requests. The ML2 (Modular Layer 2) Plugin implements the core logic for L2 networking. It receives the network configuration, writes the persistent state to the Database (MySQL/MariaDB), and dictates the network topology.
-2. **Transport Layer**: A message broker, typically RabbitMQ, sits between the controller and the compute nodes. It handles the heavy lifting of routing RPC (Remote Procedure Call) messages between the plugins and the distributed agents.
-3. **Agents**: These are Python daemons running on compute or network nodes that translate logical configurations into actual dataplane rules.
+The legacy Neutron architecture can be separated into four distinct layers:
+1. **The Controller Layer (The API and Plugins)**
+User requests hit the Neutron API. This API is bundled with core plugins-most notably the **ML2 (Modular Layer 2)** plugin-into a single Python web application known as the neutron-server. It is called a "server" because it serves the REST endpoints to the rest of the cloud, while writing persistent logical state to a central database (MySQL/MariaDB).
 
-    3.1. **OVS Agent (Layer 2)**: Configures switching rules on the hypervisor's Open vSwitch (OVS). It is also typically responsible for implementing Security Groups (firewall rules) locally on the compute node.
+    ML2 was introduced to solve a massive industry problem: cloud providers wanted to use different switch vendors (Cisco, Arista, generic Linux servers) simultaneously without rewriting the entire Neutron codebase. It achieves this by splitting configuration into two parts:
+
+    * **Type Drivers**: Define the network topology (e.g., VLAN, VXLAN, GRE).
+
+    * **Mechanism Drivers**: Translate that topology into the specific language of the underlying hardware or software.
+
+2. **The Transport Layer**: A message broker, typically RabbitMQ, sits between the controller and the compute nodes. It handles the heavy lifting of routing asynchronous RPC (Remote Procedure Call) messages from the ML2 plugin down to the distributed agents.
+
+3. **Agents**: These are the Python daemons running on compute or network nodes. They listen to the message queue and translate logical RPC commands into actual dataplane rules.
+
+    3.1. **OVS Agent (Layer 2)**: Configures switching rules on the hypervisor's Open vSwitch. It is also historically responsible for implementing Security Groups (firewall rules) locally on the compute node via iptables.
     
     3.2. **L3 Agent**: Handles Layer 3 protocols, routing, and Floating IPs (NAT).
 
@@ -65,19 +78,79 @@ The Neutron architecture is separated into distinct layers:
 
     3.4. **Metadata Agent**: Proxies requests from instances to the Nova metadata service.
 
-4. **Dataplane**: This is the underlying Linux/Network infrastructure. Note: NetNS (Network Namespaces) and Daemons (like dnsmasq or radvd) are not agents themselves. They are Linux kernel features and processes managed by the agents. For example, the L3 and DHCP agents use NetNS to isolate tenant traffic, and the DHCP agent spawns dnsmasq daemons to serve IP addresses.
+4. **Dataplane**: This is the underlying Linux/This is the underlying Linux network infrastructure. It is important to note that netns (Network Namespaces) and daemons like dnsmasq are not Neutron agents themselves. They are standard Linux kernel features managed by the agents. For example, the DHCP agent spawns a unique dnsmasq process inside an isolated netns to serve IP addresses to a specific tenant network without overlapping with others.<label for="sn-9" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-9" class="margin-toggle"/><span class="sidenote">This modularity is why OpenStack created OVN (Open Virtual Network) as a modern replacement. OVN offloads almost all dataplane configuration (L2, L3, DHCP, Security Groups) into highly optimized OpenFlow rules within OVS, allowing Neutron to step back and act purely as a high-level API manager.</span>
 
-### Neutron typical datacenter deployment
+### Typical Neutron Hyperscale Deployment
 
 ![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_deployment.png)
 
-### Neutron workflow example: port creation
+To understand why legacy OpenStack breaks at hyperscale, we must look at how it is physically deployed. The diagram above represents a standard, highly available deployment model.
+
+Imagine this architecture stretched to its absolute limits. In a hyperscale scenario like ours, we are talking about roughly 3,000 bare-metal hypervisors hosting 160,000 VMs and 200,000 virtual ports. Here is a breakdown of how the components are physically distributed to achieve High Availability (HA).
+
+#### **1. The Physical Underlay: Spine-Leaf Architecture**
+At the top of the diagram are the physical network switches arranged in a Spine-Leaf topology. Every server plugs into a Top-of-Rack (Leaf) switch, and every Leaf switch connects to every Core (Spine) switch.<label for="sn-10" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-10" class="margin-toggle"/><span class="sidenote">Traditional IT networks were built vertically (North-South) for traffic leaving the datacenter. In a cloud, the vast majority of traffic is "East-West" (VMs talking to other VMs, or compute talking to storage). Spine-leaf guarantees that any server is the exact same number of "hops" away from any other server, ensuring predictable, ultra-low latency.</span>
+
+#### **2. The Controller Cluster (The Control Plane)**
+The right side of the diagram shows the "brain." In a deployment of 3,000 hypervisors, this cannot run on virtual machines. It requires a cluster of dedicated, massive bare-metal servers. To eliminate single points of failure, the control plane is stacked:
+    * **HAProxy**: A load balancer that sits at the edge, distributing incoming API requests across active neutron-server workers.
+    * **MySQL NeutronDB**: Deployed as a synchronous Galera cluster. Every database write is strictly replicated across the controller nodes to prevent split-brain scenarios and data loss.
+    * **RabbitMQ Cluster**: The transport layer is also clustered to ensure message queues survive a hardware failure.
+
+#### **3. Compute Nodes (The Dataplane workers)**
+These are the servers where the actual tenant VMs live. Every single one of these 3,000 compute nodes runs an ovs-agent daemon. This agent maintains a persistent, open connection back to the central RabbitMQ cluster, waiting for instructions to configure its local virtual switch.
+
+#### **4. Network Nodes**
+Unlike compute nodes, Network Nodes do not run tenant VMs. They are dedicated, high-throughput bare-metal servers that run the L3 and DHCP agents. Routing thousands of gigabits of public internet traffic requires immense CPU overhead. If you placed this load on a standard compute node, it would steal CPU cycles from the paying tenants' VMs. High availability is achieved here using software redundancy, such as VRRP (Virtual Router Redundancy Protocol), which creates active/standby router pairs across multiple nodes.
+
+While this hardware design is robust and effectively eliminates physical single points of failure, hardware reliability does not equal software scalability. Stretching a central RabbitMQ cluster across 3,000 hypervisors creates a ticking time bomb in the transport layer.
+
+### Workflow Example: Port Creation (The Happy Path)
 
 ![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/port_creation_workflow.png)
 
-### Neutron workflow example: network node full sync
+Now let’s look at how the software overlay manipulates the hardware. We will trace the most common operation in OpenStack: creating a virtual network port. In a healthy cloud, this relies on asynchronous message passing. Follow the numbered circles on the diagram.
+
+**Step 1: The API Request.** When a tenant requests a new VM, the Compute service (Nova) sends a REST request to Neutron via the load balancer. The request is assigned to an ML2 plugin worker on the Controller Cluster.
+
+**Step 2: Committing to the Database.** ML2 validates the request, generates a UUID, assigns MAC/IP addresses, and compiles security group rules. It writes this "Target State" into the central database. At this moment, the port logically exists in the control plane, but the physical dataplane knows nothing about it.
+
+**Step 3: The Asynchronous Handoff.** ML2 packages the port configuration into an RPC message and drops it into the RabbitMQ cluster. The API worker’s job is done; it is free to handle the next user request.<label for="sn-11" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-11" class="margin-toggle"/><span class="sidenote">This asynchronous design is why OpenStack feels fast to the user. If the ML2 plugin had to establish a direct SSH connection to configure the compute node manually, API response times would skyrocket, and the central controller would quickly run out of worker threads.</span>
+
+**Step 4: Physical Delivery and Execution.** The message travels through the physical Spine-Leaf switches until it reaches the specific hypervisor. The local ovs-agent receives the message, unpacks the JSON payload, and executes the local Linux commands to wire up the virtual interface. The VM boots, and traffic flows.
+
+### Where the Cracks Begin to Form
+
+This decoupled architecture is elegant on paper, but it introduces a fatal flaw at scale: it assumes the transport layer is perfectly reliable.
+
+What happens if the RabbitMQ cluster is momentarily overwhelmed by 3,000 agents reporting their status simultaneously, and it drops the message? The local ovs-agent is blind. It has no idea Steps 1, 2, and 3 ever occurred. The central database says the port is ACTIVE, but on the hypervisor, the VM has no network connection.
+
+Because OpenStack relies on decentralized agents, it requires a fail-safe to correct these desyncs. When an agent loses its connection to the message queue—even for a few seconds—it cannot trust its local state. To fix this, the agent is forced to trigger a blunt recovery mechanism known as a "Full Sync." In a hyperscale environment, this is often the exact mechanism that brings the entire cloud crashing down.
+
+### Workflow Example: Network Node Full Sync
 
 ![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_fullsync.png)
+
+At its core, a cloud environment is a massive state machine. The fundamental promise of OpenStack is that the physical reality of the datacenter (Actual State) must strictly mirror the central database (Target State).
+
+When an agent daemon is restarted—due to a crash, an upgrade, or a network blip—its local memory cache is invalidated. The agent wakes up blind. It cannot assume its local configuration is correct, because an API user might have deleted a router or added a hundred ports while the agent was offline. To reconcile this, the agent triggers a Full Sync. Let’s walk through the diagram above, using a Network Node as our example.
+
+**Step 1**: The Call for Help. The moment the agent reconnects to RabbitMQ, it realizes it has lost synchronization. It fires off a direct RPC call to the controller: "Give me the complete configuration state for every single resource assigned to my hostname."
+
+**Step 2**: API Reception. The request routes through HAProxy and is picked up by the ML2 Plugin.
+
+**Step 3**: The Heavy Database Query. Unlike simple port creation, this is computationally expensive. ML2 must execute massive, complex JOIN queries against the database to gather the complete state of every logical router, floating IP, namespace, and DHCP pool scheduled to that node.
+
+**Step 4**: Packaging the Payload. The API worker compiles all this data into a massive, monolithic JSON payload and drops it into a dedicated RabbitMQ reply queue.
+
+**Step 5**: The Massive Delivery. The large data payload traverses the physical network. The agent downloads this state file, wipes its local caching discrepancies, and methodically configures the Linux dataplane to perfectly match the central database.
+
+### The Advantage (And the Trap)
+This mechanism exists because it makes operational recovery incredibly simple. If an SRE suspects a node has corrupted rules, they just restart the agent. The agent downloads the absolute truth from the database and flawlessly heals itself. In a 50-node private cloud, this works perfectly.
+
+But look closely at Step 5. What happens if that massive payload takes too long to generate, or gets dropped by RabbitMQ because the queue is congested? The agent waits for a timeout period. When the message doesn't arrive, the agent assumes the request was lost, and it fiercely fires off Step 1 all over again.
+
+Imagine a scenario where a rack switch reboots, causing 40 compute nodes to drop offline and request a full sync at the exact same second. As we will explore in the next section, this simple, self-healing loop transforms into a catastrophic, self-inflicted Denial of Service attack against the cloud's own control plane.
 
 
 ## IV. The "Full Sync" Problem
@@ -101,6 +174,8 @@ There other events or errors that can cause this cascading failure that can happ
 
 
 Worth noting that these problems exist only in large scale public installations of openstack, originally openstack as a private cloud solution where you dont have this large amount of hypervisors, vms, users. But VK cloud is a hyperscaler and needs to keep it's great reputation, that's why a separate solution called SPRUT was created to combat problems of neutron. There is also alternative created by openstack called OVN but by the time SPRUT started development OVN wasnt mature enough. Also same API was needed for the smooth migration for clients from neutron to new stable sprut sdn that I am going to talk about in the next article.
+
+### Openstack Cells won't solve neutron scalability issues
 
 ## V. The Architectural Shift: Moving to the Modern Models
 
