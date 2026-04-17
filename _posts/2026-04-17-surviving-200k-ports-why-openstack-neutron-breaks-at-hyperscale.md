@@ -2,9 +2,15 @@
 layout: post
 title: "Surviving 200,000 Ports: Why OpenStack Neutron Breaks at Hyperscale"
 ---
-In this post, we talk about different SDNs, decisions behind them and neutron problems and how to solve them.
+In this post, we are going to explore Software-Defined Networking (SDN) architectures at hyperscale—specifically, what happens when you push a cloud environment past 160,000 VMs, 200,000 virtual ports, and roughly 3,000 bare-metal hypervisors. To put that scale into perspective, OpenStack Neutron was originally designed for private enterprise environments and historically recommended a maximum of around 500 hypervisors.
 
-This outage happened two times, one few years before I joined VK. Another when I was solution architect at vk after which I pushed migration to new proprietary SDN by developing tools, migration strategies and working with biggest clients. Migration to sprut made client safe and for others if full sync (god forbid) happens again it will be less detrimental. Now vk is fully using sprut and it works perfectly. To my knowledge VK did not suffer any outges since I left.
+But as VK Cloud rapidly grew into one of the largest public cloud providers in the CIS region—firmly establishing itself as the primary alternative to Yandex—we blew past those private-cloud limits. We pushed the architecture as far as it could go, until it simply couldn't go any further.
+
+I did not design that original OpenStack architecture, nor did I write the code for our new proprietary SDN, Sprut. I joined as a Lead Solution Architect and inherited a massive system that had already suffered a catastrophic "full sync" outage a few years prior. When the same disaster happened a second time on my watch, I spearheaded the initiative to migrate our top-paying clients away from Neutron to our new SDN (I also consulted development team on automated migration solution for small clients).
+
+To prove to our clients that the new system would keep them safe, I spent months extracting hard-won, undocumented wisdom from our SRE and maintenance teams. I dug deep into the theoretical and practical limits of our SDN to understand exactly why the old one failed, and how the new architecture would prevent it from ever happening again.
+
+This article is a distillation of that unique, battle-tested knowledge. Before we talk about the caveats of live-migrating a hyperscale network (which I will cover in my next post), we need to understand the fundamental design flaws of legacy systems. Here is exactly why OpenStack Neutron breaks at hyperscale, and how modern SDNs solve the bottleneck.
 
 ## I. Reality of building scalable clouds
 
@@ -100,7 +106,7 @@ Explain how sprut works in more details and it's architecture which exactly does
 
 ### New Openstack standard: OVN
 
-[!alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/ovn_arch.png)
+![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/ovn_arch.png)
 
 ### Proprietary solution: Sprut
 
