@@ -207,7 +207,7 @@ But VK Cloud is a hyperscaler and must protect its reputation and its clients. T
 
 ## V. The Architectural Shift: Moving to the Modern Models
 
-![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_sprut_comparsion.png)
+![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/sdn_arch_comparison.png)
 Reference difference in neutron and sprut architectures (image 6) and how sprut solves sprut bottleneck.
 
 Explain how sprut works in more details and it's architecture which exactly does 2 jobs we mentioned in the beginning! NFV + SDN (it's a really good abstraction, ref. image 7)
