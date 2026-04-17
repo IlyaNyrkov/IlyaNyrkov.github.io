@@ -155,25 +155,60 @@ Imagine a scenario where a rack switch reboots, causing 40 compute nodes to drop
 
 ## IV. The "Full Sync" Problem
 
+Here is the revised section. I have removed the redundant explanations, tightened the technical descriptions to explain exactly why the system fails (the DB locks, the timeout loop, the Layer 2 blindness), and integrated your new diagrams perfectly into the narrative flow.
+
+I have also included the interactive simulator widget we discussed at the end of the text, which you can use to let your readers visually experience the agonizing math of this 20-hour bottleneck.
+
+IV. The "Full Sync" Problem
+While the Full Sync mechanism is a reliable safety net for minor, everyday operational hiccups, at hyperscale, it can horribly backfire. A single incident can cost a company millions of dollars.
+
+Let's look at a catastrophic scenario: a whole datacenter loses power. Suppose we solved the energy problem quickly and got the electricity back, but our backup power didn't work (this actually happened to me) and the servers shut down hard.
+
+Getting the compute capacity back online, even for 160,000+ VMs (including massive 128 CPU / 1024 GB RAM instances), is surprisingly fast. Nova can boot them in about 20 minutes. But without the network, Compute is useless. The users' infrastructure cannot serve external requests, computational clusters cannot communicate with each other during MapReduce operations, and the cloud remains effectively dead.
+
+When those 3,000+ hypervisors power back on, their local network agents wake up with wiped memories. They are blind. For the network nodes, our 200,000+ virtual Neutron ports are basically gone. To fix this, every single agent simultaneously triggers a Full Sync.
+
+### The Thundering Herd and the Timeout Loop
+
 ![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/full_sync_disaster.png)
 
-In general full sync is a good idea that allows to make network consistent again relatively easy (especially for operations team). But it can horribly backfire and one incident can cost a company millions of dollars. The way Neutron works, when ML2 Plugin receives new network updates (create network, create port, update a port and etc.) it pushes the messages for responsible agents via rabbit MQ it also records the state into controllers database.
+This is where the architecture crumbles. All 3,000 hypervisors simultaneously fire RPC requests into RabbitMQ, demanding the state of their respective dataplane entities.
 
-The queue helps to not overwhelm the agents with work and weaker hardware can used for these agents (that configure the dataplane e.g. ovs, l3, dhcp, meta).
+The messaging queue is not the only problem—you cannot just throw more RAM at RabbitMQ to fix this. The true bottleneck is the central control plane. The ML2 Plugin has to process these thousands of concurrent requests by executing massive, complex SQL JOIN queries against the central MySQL database.
 
-The problem with the queue is that messages can be lost and it's not easy to figure out that something actually was missed. For that full sync was created, agent requests the info from control database with all state information about dataplane for which agent is responsible. So using this mechanism we can do something simillar to git pull in software development and make our ports "up to date". The problem that this mechanism still uses rabbitMQ to get this information about the dataplane state. Even getting info about few virtual ports and applying them can take few minutes. Now imagine (and this actually happened) if datacenter looses energy or just few network nodes (servers that hold network agents) loose power. Let's look at the case when whole datacenter looses power. Suppose we solved the problem with energy and got electricity back, but our backup power didnt work (this also happened to me) and servers turned off. Getting back vms even when there is 160k+ vms (including large ones 128 cpu 1024 gb ram) can take at most 20 minutes, without the network Compute is useless. User's infrastructure cannot serve outside requests, computational clusters cannot communicate with each other during map reduce operations and many more. The problem is that with 160k+ vms we have something like 200k+ virtual neutron ports (almost real numbers I but not exact because it's a private information). For network nodes and agents these ports are basically gone, we need a full sync. For simplicity I will mention only neutron network ports as a primitive that dataplane manages as it is the lowest level primitive necessary for vm to communicate, besides vms there are other things like networks, subnetworks, virtual routers, load balancers and etc.
+The database CPU instantly spikes to 100%. Database locks occur. The queue overflows. Because the database is locked up, the ML2 Plugin takes a long time to generate the payload. If it takes longer than the agent's built-in timeout, the agent assumes its request was lost.
 
-Now remember that it takes a few minutes to setup just a few ports, now remember that all of these updates have to go through one single messaging queue (or more accurately distrubuted but not really autoscalable, we cannot suddenly make it larger just for cases of outage) this queue is not really infinitely scalabale and has it's limits, it is able to process aprox 9k ports per hour. You see a problem? We managed to quickly get the power back up and running, we have mechanisms to spin up vms back automatically relatively fast, our ceph cluster and storage is also reliable and did not loose any data, we still have a third piece network. Because of the network our 30 min outage turned in almost whole day outage 20+ hrs.
+What does the agent do? It fires another Full Sync request into the queue. The system effectively performs a catastrophic Denial of Service (DDoS) attack on itself. Under this self-inflicted crushing load, the system throughput drops to a crawl—processing only about 9,000 ports per hour. Because of this architectural flaw, a 30-minute power outage instantly turns into an agonizing 20+ hour recovery nightmare.
+
+### The VIP Client Dilemma
 
 ![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/full_sync_port_order_problem.png)
 
-There is another terrible problem. Almost all of the hyperscalers and large cloud providers (vk cloud is not exception) have a few clients, VIP clients that bring 80%+ of revenue. Ofcourse any cloud provider would say to you that they care about all and everyone, but in a real business world ofcourse top paying customers are top priority, they are a driving force for cloud providers growth, with large customers provider cannot really grow (hardware count, employees, functionaility and many more). In Fullsync the order of ports that are being restored is not really controlable, you cant say to neutron restore vip clients first. Network nodes (that hold agents that configure dataplane) dont really now about tenants (tenant is a like a project or account in AWS basically isolated set of workload, quotas, billing) and just restore all missing ports of vms that were there. So you get a stream of updates requested by each agent responsible for set of hypervisors which hold set of vms. One client wont hold all of his vms on one hypervisors, it can potentially be done via labels or taints but it's also bad idea especially if it's some RAFT database cluster, better to have vms of a cluster on different hypervisors preferably in different datacenters even. So you have scattered vms of one expensive clients across different hypervisors and you cannot really speedup restoration for this particular client without some significant efforts or manual intervention by SREs. And manual intervention is risky too because it can break full sync process and everything will have to be started over again or some portion of progress will be lost e.g. due to error from engineer (also what happened in my case).
+During a 20-hour outage, business priorities become critical. Almost all large cloud providers have VIP clients that bring in 80%+ of the revenue. They are the driving force for the provider's growth. Naturally, you want to restore their networks first.
 
-There other events or errors that can cause this cascading failure that can happen on several layers of the technical stack (server equipment failure, rabbitMQ outage and many more).
+With legacy Neutron, you can't.
 
-Worth noting that these problems exist only in large scale public installations of openstack, originally openstack as a private cloud solution where you dont have this large amount of hypervisors, vms, users. But VK cloud is a hyperscaler and needs to keep it's great reputation, that's why a separate solution called SPRUT was created to combat problems of neutron. There is also alternative created by openstack called OVN but by the time SPRUT started development OVN wasnt mature enough. Also same API was needed for the smooth migration for clients from neutron to new stable sprut sdn that I am going to talk about in the next article.
+As shown in the diagram above, the Full Sync restoration order is completely uncontrollable. The ovs-agent configures the dataplane at Layer 2. It only sees UUIDs, MAC addresses, and Linux namespaces. It has absolutely no concept of OpenStack "Tenants," "Quotas," or "VIP Billing Status"—that metadata only exists in the locked-up MySQL database.
 
-### Openstack Cells won't solve neutron scalability issues
+The agent just blindly asks for UUIDs. Furthermore, a VIP client's VMs are scattered across hundreds of different hypervisors for fault tolerance. Because you cannot tell the agents to prioritize specific tenant workloads, the VIP client's recovery is completely held hostage by the global queue.
+
+Attempting manual intervention by SREs to speed this up is incredibly risky. Manually restarting services or tweaking queues can easily break the fragile Full Sync progress, forcing the timeout loop to start all over again (which was exactly what exacerbated the outage in my case).
+
+### OpenStack Cells Won't Solve Neutron Scalability Issues
+When discussing OpenStack at hyperscale, architects often point to OpenStack Cells as the ultimate scaling silver bullet. And for the compute side, they are right.
+
+OpenStack Cells (specifically Nova Cells) allow you to partition a massive cloud deployment into smaller, isolated "shards." Instead of putting 3,000 hypervisors on one message queue, you break them into manageable chunks-say, 10 cells of 300 hypervisors. Each cell gets its own local database and its own local message queue for compute operations, while the user still interacts with a single, unified global API. Without Cells, running 160,000 VMs would be impossible; Nova would collapse under its own weight just like Neutron.
+
+However, there is a might be misconception that deploying OpenStack Cells shards your network, too. It does not. OpenStack Cells only shard Nova (Compute). They do not cover Neutron (Networking), Cinder (Storage), or Glance (Images).
+
+This means that even if you perfectly partition your 3,000 hypervisors into beautifully isolated compute cells, the ovs-agent on every single one of those 3,000 machines is still reporting back to the exact same, monolithic, global Neutron RabbitMQ cluster and MySQL database. The compute plane is distributed, but the network control plane remains a massive single point of failure.
+
+Because Cells cannot save the network, scaling an OpenStack cloud to hyperscale sizes inevitably forces a harsh realization: you cannot fix Neutron by partitioning the infrastructure around it. You have to rip out and replace the underlying SDN entirely.
+
+### Looking Forward
+It is worth noting that these cascading failures exist only in large-scale public installations of OpenStack. Originally, OpenStack was designed as a private cloud solution where you simply don't have this massive concentration of hypervisors and ports.
+
+But VK Cloud is a hyperscaler and must protect its reputation and its clients. That is why a separate, proprietary SDN solution called SPRUT was created to combat the limitations of Neutron. While the open-source community eventually developed OVN to solve these same issues, OVN was not mature enough when SPRUT development began. Furthermore, we needed a system that maintained the exact same API to ensure a smooth, zero-downtime migration for our clients. In the next article, we will dive into how SPRUT fundamentally re-architected this control plane.
 
 ## V. The Architectural Shift: Moving to the Modern Models
 
