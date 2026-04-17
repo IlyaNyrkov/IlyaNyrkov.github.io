@@ -12,7 +12,7 @@ To understand why, we have to look at SDN (Software-Defined Networking). SDN is 
 
 ## II. The Architecture of SDN solutions
 
-![alt text](../assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale.md/sdn_taxonomy.png)
+![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/sdn_taxonomy.png)
 
 Here we talk about SDN in general and how it is used in the cloud, it's important distinction because many of the features of cloud sdn like neutron or ovn seem like an overkill in a regular small-mid size datacenter e.g. 20 hypervisors.
 
@@ -22,9 +22,9 @@ Here we talk about SDN in general and how it is used in the cloud, it's importan
 
 The architecture of OpenStack Neutron has its distinct advantages, having been originally designed to provide network-as-a-service for private clouds and enterprise environments. In these environments—typically involving a moderate number of hypervisors—its design works well to abstract complex networking. However, in large-scale public cloud deployments, the architecture faces significant scaling challenges. A core structural issue at scale is its heavy reliance on a centralized control plane communicating over a single message queue system (RabbitMQ) to synchronize state across hundreds or thousands of distributed agents.
 
-### How neutron works
+### Neutron architecture
 
-![alt text](../assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale.md/neutron_arch.png)
+![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_arch.png)
 
 The Neutron architecture is separated into distinct layers: 
 1. **Controller Layer**: The Neutron API receives requests. The ML2 (Modular Layer 2) Plugin implements the core logic for L2 networking. It receives the network configuration, writes the persistent state to the Database (MySQL/MariaDB), and dictates the network topology.
@@ -41,17 +41,17 @@ The Neutron architecture is separated into distinct layers:
 
 4. **Dataplane**: This is the underlying Linux/Network infrastructure. Note: NetNS (Network Namespaces) and Daemons (like dnsmasq or radvd) are not agents themselves. They are Linux kernel features and processes managed by the agents. For example, the L3 and DHCP agents use NetNS to isolate tenant traffic, and the DHCP agent spawns dnsmasq daemons to serve IP addresses.
 
-### How Neutron is typically deployed in Datacenter
+### Neutron typical datacenter deployment
 
-![alt text](../assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale.md/neutron_deployment.png)
+![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_deployment.png)
 
 ### Neutron workflow example: port creation
 
-![alt text](../assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale.md/port_creation_workflow.png)
+![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/port_creation_workflow.png)
 
 ### Neutron workflow example: network node full sync
 
-![alt text](../assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale.md/neutron_fullsync.png)
+![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_fullsync.png)
 
 
 ## IV. The "Full Sync" Problem
