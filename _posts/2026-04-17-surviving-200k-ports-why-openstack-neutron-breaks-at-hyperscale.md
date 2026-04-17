@@ -100,7 +100,7 @@ Explain how sprut works in more details and it's architecture which exactly does
 
 ### New Openstack standard: OVN
 
-[!alt text](assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/ovn_arch.png)
+[!alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/ovn_arch.png)
 
 ### Proprietary solution: Sprut
 
