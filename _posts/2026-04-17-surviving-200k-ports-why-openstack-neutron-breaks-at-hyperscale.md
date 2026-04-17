@@ -125,7 +125,7 @@ This decoupled architecture is elegant on paper, but it introduces a fatal flaw 
 
 What happens if the RabbitMQ cluster is momentarily overwhelmed by 3,000 agents reporting their status simultaneously, and it drops the message? The local ovs-agent is blind. It has no idea Steps 1, 2, and 3 ever occurred. The central database says the port is ACTIVE, but on the hypervisor, the VM has no network connection.
 
-Because OpenStack relies on decentralized agents, it requires a fail-safe to correct these desyncs. When an agent loses its connection to the message queue—even for a few seconds—it cannot trust its local state. To fix this, the agent is forced to trigger a blunt recovery mechanism known as a "Full Sync." In a hyperscale environment, this is often the exact mechanism that brings the entire cloud crashing down.
+Because OpenStack relies on decentralized agents, it requires a fail-safe to correct these desyncs. When an agent loses its connection to the message queue-even for a few seconds-it cannot trust its local state. To fix this, the agent is forced to trigger a blunt recovery mechanism known as a "Full Sync." In a hyperscale environment, this is often the exact mechanism that brings the entire cloud crashing down.
 
 ### Workflow Example: Network Node Full Sync
 
@@ -133,7 +133,7 @@ Because OpenStack relies on decentralized agents, it requires a fail-safe to cor
 
 At its core, a cloud environment is a massive state machine. The fundamental promise of OpenStack is that the physical reality of the datacenter (Actual State) must strictly mirror the central database (Target State).
 
-When an agent daemon is restarted—due to a crash, an upgrade, or a network blip—its local memory cache is invalidated. The agent wakes up blind. It cannot assume its local configuration is correct, because an API user might have deleted a router or added a hundred ports while the agent was offline. To reconcile this, the agent triggers a Full Sync. Let’s walk through the diagram above, using a Network Node as our example.
+When an agent daemon is restarted-due to a crash, an upgrade, or a network blip-its local memory cache is invalidated. The agent wakes up blind. It cannot assume its local configuration is correct, because an API user might have deleted a router or added a hundred ports while the agent was offline. To reconcile this, the agent triggers a Full Sync. Let’s walk through the diagram above, using a Network Node as our example.
 
 **Step 1**: The Call for Help. The moment the agent reconnects to RabbitMQ, it realizes it has lost synchronization. It fires off a direct RPC call to the controller: "Give me the complete configuration state for every single resource assigned to my hostname."
 
@@ -155,6 +155,8 @@ Imagine a scenario where a rack switch reboots, causing 40 compute nodes to drop
 
 ## IV. The "Full Sync" Problem
 
+![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/full_sync_disaster.png)
+
 In general full sync is a good idea that allows to make network consistent again relatively easy (especially for operations team). But it can horribly backfire and one incident can cost a company millions of dollars. The way Neutron works, when ML2 Plugin receives new network updates (create network, create port, update a port and etc.) it pushes the messages for responsible agents via rabbit MQ it also records the state into controllers database.
 
 The queue helps to not overwhelm the agents with work and weaker hardware can used for these agents (that configure the dataplane e.g. ovs, l3, dhcp, meta).
@@ -163,15 +165,11 @@ The problem with the queue is that messages can be lost and it's not easy to fig
 
 Now remember that it takes a few minutes to setup just a few ports, now remember that all of these updates have to go through one single messaging queue (or more accurately distrubuted but not really autoscalable, we cannot suddenly make it larger just for cases of outage) this queue is not really infinitely scalabale and has it's limits, it is able to process aprox 9k ports per hour. You see a problem? We managed to quickly get the power back up and running, we have mechanisms to spin up vms back automatically relatively fast, our ceph cluster and storage is also reliable and did not loose any data, we still have a third piece network. Because of the network our 30 min outage turned in almost whole day outage 20+ hrs.
 
-
+![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/full_sync_port_order_problem.png)
 
 There is another terrible problem. Almost all of the hyperscalers and large cloud providers (vk cloud is not exception) have a few clients, VIP clients that bring 80%+ of revenue. Ofcourse any cloud provider would say to you that they care about all and everyone, but in a real business world ofcourse top paying customers are top priority, they are a driving force for cloud providers growth, with large customers provider cannot really grow (hardware count, employees, functionaility and many more). In Fullsync the order of ports that are being restored is not really controlable, you cant say to neutron restore vip clients first. Network nodes (that hold agents that configure dataplane) dont really now about tenants (tenant is a like a project or account in AWS basically isolated set of workload, quotas, billing) and just restore all missing ports of vms that were there. So you get a stream of updates requested by each agent responsible for set of hypervisors which hold set of vms. One client wont hold all of his vms on one hypervisors, it can potentially be done via labels or taints but it's also bad idea especially if it's some RAFT database cluster, better to have vms of a cluster on different hypervisors preferably in different datacenters even. So you have scattered vms of one expensive clients across different hypervisors and you cannot really speedup restoration for this particular client without some significant efforts or manual intervention by SREs. And manual intervention is risky too because it can break full sync process and everything will have to be started over again or some portion of progress will be lost e.g. due to error from engineer (also what happened in my case).
 
-
-
 There other events or errors that can cause this cascading failure that can happen on several layers of the technical stack (server equipment failure, rabbitMQ outage and many more).
-
-
 
 Worth noting that these problems exist only in large scale public installations of openstack, originally openstack as a private cloud solution where you dont have this large amount of hypervisors, vms, users. But VK cloud is a hyperscaler and needs to keep it's great reputation, that's why a separate solution called SPRUT was created to combat problems of neutron. There is also alternative created by openstack called OVN but by the time SPRUT started development OVN wasnt mature enough. Also same API was needed for the smooth migration for clients from neutron to new stable sprut sdn that I am going to talk about in the next article.
 
