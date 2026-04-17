@@ -187,7 +187,8 @@ blockquote footer {
 
 section > p,
 section > footer,
-section > table {
+section > table,
+article > header {
     width: 55%;
 }
 
@@ -387,7 +388,8 @@ label.margin-toggle:not(.sidenote-number) {
     hr,
     section > p,
     section > footer,
-    section > table {
+    section > table,
+    article > header {
         width: 100%;
     }
 
