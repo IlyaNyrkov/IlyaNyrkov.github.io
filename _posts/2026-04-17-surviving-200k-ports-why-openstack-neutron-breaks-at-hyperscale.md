@@ -155,16 +155,11 @@ Imagine a scenario where a rack switch reboots, causing 40 compute nodes to drop
 
 ## IV. The "Full Sync" Problem
 
-Here is the revised section. I have removed the redundant explanations, tightened the technical descriptions to explain exactly why the system fails (the DB locks, the timeout loop, the Layer 2 blindness), and integrated your new diagrams perfectly into the narrative flow.
-
-I have also included the interactive simulator widget we discussed at the end of the text, which you can use to let your readers visually experience the agonizing math of this 20-hour bottleneck.
-
-IV. The "Full Sync" Problem
 While the Full Sync mechanism is a reliable safety net for minor, everyday operational hiccups, at hyperscale, it can horribly backfire. A single incident can cost a company millions of dollars.
 
-Let's look at a catastrophic scenario: a whole datacenter loses power. Suppose we solved the energy problem quickly and got the electricity back, but our backup power didn't work (this actually happened to me) and the servers shut down hard.
+Let's look at a catastrophic scenario: an entire datacenter loses power. Suppose we resolve the energy grid failure quickly, but our backup power fails to engage (which actually happened to me), causing the servers to shut down hard.
 
-Getting the compute capacity back online, even for 160,000+ VMs (including massive 128 CPU / 1024 GB RAM instances), is surprisingly fast. Nova can boot them in about 20 minutes. But without the network, Compute is useless. The users' infrastructure cannot serve external requests, computational clusters cannot communicate with each other during MapReduce operations, and the cloud remains effectively dead.
+Getting the compute capacity back online—even for 160,000+ VMs, including massive 128-core, 1TB RAM instances—is surprisingly fast. The compute service can boot them in about 20 minutes.<label for="sn-12" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-12" class="margin-toggle"/><span class="sidenote">OpenStack's compute service (Nova) is highly distributed. Hypervisors can independently boot local VMs from local disk caches without waiting for a massive payload from a central bottleneck.</span> But without the network, compute is useless. The users' infrastructure cannot serve external requests, computational clusters cannot communicate during MapReduce operations, and the cloud remains effectively dead.
 
 When those 3,000+ hypervisors power back on, their local network agents wake up with wiped memories. They are blind. For the network nodes, our 200,000+ virtual Neutron ports are basically gone. To fix this, every single agent simultaneously triggers a Full Sync.
 
@@ -174,11 +169,11 @@ When those 3,000+ hypervisors power back on, their local network agents wake up 
 
 This is where the architecture crumbles. All 3,000 hypervisors simultaneously fire RPC requests into RabbitMQ, demanding the state of their respective dataplane entities.
 
-The messaging queue is not the only problem—you cannot just throw more RAM at RabbitMQ to fix this. The true bottleneck is the central control plane. The ML2 Plugin has to process these thousands of concurrent requests by executing massive, complex SQL JOIN queries against the central MySQL database.
+The messaging queue is not the only problem—you cannot just throw more RAM at RabbitMQ to fix this.<label for="sn-13" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-13" class="margin-toggle"/><span class="sidenote">RabbitMQ is optimized for high-throughput, small-payload message routing. Pumping multi-megabyte JSON Full Sync state files through it instantly causes severe memory pressure and queue drops.</span> The true bottleneck is the central control plane. The ML2 Plugin has to process these thousands of concurrent requests by executing massive, complex SQL JOIN queries against the central MySQL database.
 
-The database CPU instantly spikes to 100%. Database locks occur. The queue overflows. Because the database is locked up, the ML2 Plugin takes a long time to generate the payload. If it takes longer than the agent's built-in timeout, the agent assumes its request was lost.
+The database CPU instantly spikes to 100%. Database locks occur. The queue overflows. Because the database is locked up, the ML2 Plugin takes an excruciatingly long time to generate the payload. If it takes longer than the agent's built-in timeout setting, the agent assumes its original request was lost in the network.
 
-What does the agent do? It fires another Full Sync request into the queue. The system effectively performs a catastrophic Denial of Service (DDoS) attack on itself. Under this self-inflicted crushing load, the system throughput drops to a crawl—processing only about 9,000 ports per hour. Because of this architectural flaw, a 30-minute power outage instantly turns into an agonizing 20+ hour recovery nightmare.
+What does the agent do? It aggressively fires another Full Sync request into the queue. The system effectively performs a catastrophic Denial of Service (DDoS) attack on itself. Under this self-inflicted, crushing load, the system throughput drops to a crawl—processing only about 9,000 ports per hour. Because of this architectural flaw, a 30-minute power outage instantly turns into an agonizing 20+ hour recovery nightmare.
 
 ### The VIP Client Dilemma
 
@@ -188,33 +183,34 @@ During a 20-hour outage, business priorities become critical. Almost all large c
 
 With legacy Neutron, you can't.
 
-As shown in the diagram above, the Full Sync restoration order is completely uncontrollable. The ovs-agent configures the dataplane at Layer 2. It only sees UUIDs, MAC addresses, and Linux namespaces. It has absolutely no concept of OpenStack "Tenants," "Quotas," or "VIP Billing Status"—that metadata only exists in the locked-up MySQL database.
+As shown in the diagram above, the Full Sync restoration order is completely uncontrollable. The ovs-agent configures the dataplane at Layer 2. It only sees UUIDs, MAC addresses, and Linux namespaces. It has absolutely no concept of OpenStack "Tenants," "Quotas," or "VIP Billing Status"—that metadata only exists in the locked-up MySQL database.<label for="sn-14" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-14" class="margin-toggle"/><span class="sidenote">OpenStack Keystone handles identity and multitenancy. By the time a configuration reaches the physical hypervisor agent, all tenant context is stripped away for security and simplicity, leaving only raw network primitives.</span>
 
-The agent just blindly asks for UUIDs. Furthermore, a VIP client's VMs are scattered across hundreds of different hypervisors for fault tolerance. Because you cannot tell the agents to prioritize specific tenant workloads, the VIP client's recovery is completely held hostage by the global queue.
+The agent just blindly asks for UUIDs. Furthermore, a VIP client's VMs are scattered across hundreds of different hypervisors for fault tolerance. Because you cannot tell the decentralized agents to prioritize specific tenant workloads, the VIP client's recovery is completely held hostage by the congested global queue.
 
 Attempting manual intervention by SREs to speed this up is incredibly risky. Manually restarting services or tweaking queues can easily break the fragile Full Sync progress, forcing the timeout loop to start all over again (which was exactly what exacerbated the outage in my case).
 
-### OpenStack Cells Won't Solve Neutron Scalability Issues
+### OpenStack Cells Won't Solve Neutron Scalability
 When discussing OpenStack at hyperscale, architects often point to OpenStack Cells as the ultimate scaling silver bullet. And for the compute side, they are right.
 
-OpenStack Cells (specifically Nova Cells) allow you to partition a massive cloud deployment into smaller, isolated "shards." Instead of putting 3,000 hypervisors on one message queue, you break them into manageable chunks-say, 10 cells of 300 hypervisors. Each cell gets its own local database and its own local message queue for compute operations, while the user still interacts with a single, unified global API. Without Cells, running 160,000 VMs would be impossible; Nova would collapse under its own weight just like Neutron.
+OpenStack Cells allow you to partition a massive cloud deployment into smaller, isolated "shards." Instead of putting 3,000 hypervisors on one message queue, you break them into manageable chunks—say, 10 cells of 300 hypervisors each. Each cell gets its own local database and its own local message queue for compute operations, while the end-user still interacts with a single, unified global API. Without Cells, running 160,000 VMs would be impossible; Nova would collapse under its own weight just like Neutron.
 
-However, there is a might be misconception that deploying OpenStack Cells shards your network, too. It does not. OpenStack Cells only shard Nova (Compute). They do not cover Neutron (Networking), Cinder (Storage), or Glance (Images).
+However, there is a common misconception that deploying OpenStack Cells shards your network, too. It does not. OpenStack Cells only shard Nova (Compute). They do not cover Neutron (Networking), Cinder (Storage), or Glance (Images).<label for="sn-15" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-15" class="margin-toggle"/><span class="sidenote">While there have been community discussions and experimental attempts to shard Neutron using routed provider networks or multi-region setups, there is no native, push-button "Neutron Cells" equivalent to Nova Cells v2.</span>
 
 This means that even if you perfectly partition your 3,000 hypervisors into beautifully isolated compute cells, the ovs-agent on every single one of those 3,000 machines is still reporting back to the exact same, monolithic, global Neutron RabbitMQ cluster and MySQL database. The compute plane is distributed, but the network control plane remains a massive single point of failure.
 
 Because Cells cannot save the network, scaling an OpenStack cloud to hyperscale sizes inevitably forces a harsh realization: you cannot fix Neutron by partitioning the infrastructure around it. You have to rip out and replace the underlying SDN entirely.
 
 ### Looking Forward
-It is worth noting that these cascading failures exist only in large-scale public installations of OpenStack. Originally, OpenStack was designed as a private cloud solution where you simply don't have this massive concentration of hypervisors and ports.
+It is worth noting that these cascading failures exist only in large-scale public installations of OpenStack. Originally, OpenStack was designed as a private cloud solution where you simply don't have this massive concentration of hypervisors and ports competing for the same message queue.
 
-But VK Cloud is a hyperscaler and must protect its reputation and its clients. That is why a separate, proprietary SDN solution called SPRUT was created to combat the limitations of Neutron. While the open-source community eventually developed OVN to solve these same issues, OVN was not mature enough when SPRUT development began. Furthermore, we needed a system that maintained the exact same API to ensure a smooth, zero-downtime migration for our clients. In the next article, we will dive into how SPRUT fundamentally re-architected this control plane.
+But VK Cloud is a hyperscaler and must protect its reputation and its clients. That is why a separate, proprietary SDN solution called SPRUT was created to combat the limitations of Neutron. While the open-source community eventually developed OVN to solve these same issues, OVN was not mature enough when SPRUT development began. Furthermore, we needed a system that maintained the exact same API to ensure a smooth, zero-downtime migration for our clients.
 
 ## V. The Architectural Shift: Moving to the Modern Models
 
+![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_sprut_comparsion.png)
 Reference difference in neutron and sprut architectures (image 6) and how sprut solves sprut bottleneck.
 
-Explain how sprut works in more details and it's architecture which exactly does 2 jobs we mentioned in the beggining! NFV + SDN (it's a really good abstraction, ref. image 7)
+Explain how sprut works in more details and it's architecture which exactly does 2 jobs we mentioned in the beginning! NFV + SDN (it's a really good abstraction, ref. image 7)
 
 
 - Reference Column C ("The New Layer Model") in your diagram.
@@ -235,6 +231,8 @@ Explain how sprut works in more details and it's architecture which exactly does
 ![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/ovn_arch.png)
 
 ### Proprietary solution: Sprut
+
+![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/sprut_arch_detailed.png)
 
 Developed by VK cloud
 - reasons why separate soluion was used instead of OVN
