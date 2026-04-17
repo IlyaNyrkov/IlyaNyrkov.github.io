@@ -12,4 +12,4 @@ I'm Ilya Nyrkov. I build low-level compute clusters and deployment pipelines for
 
 ### Contact
 
-You can find my code on [GitHub](https://github.com/IlyaNyrkov) or connect with me on [LinkedIn](https://www.linkedin.com/in/ilya-nyrkov/).
+You can find my code on [GitHub](https://github.com/IlyaNyrkov) or connect with me on [LinkedIn](https://www.linkedin.com/in/ilya-nyrkov/) or contact me via email: ilya.nyrkov@gmail.com
