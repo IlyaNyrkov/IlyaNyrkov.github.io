@@ -20,7 +20,7 @@ Here we talk about SDN in general and how it is used in the cloud, it's importan
 
 ## III. Neutron architecture: Design and Scaling Considerations
 
-The architecture of OpenStack Neutron has its distinct advantages, having been originally designed to provide network-as-a-service for private clouds and enterprise environments. In these environments—typically involving a moderate number of hypervisors—its design works well to abstract complex networking. However, in large-scale public cloud deployments, the architecture faces significant scaling challenges. A core structural issue at scale is its heavy reliance on a centralized control plane communicating over a single message queue system (RabbitMQ) to synchronize state across hundreds or thousands of distributed agents.
+The architecture of OpenStack Neutron has its distinct advantages, having been originally designed to provide network-as-a-service for private clouds and enterprise environments. In these environments-typically involving a moderate number of hypervisors-its design works well to abstract complex networking. However, in large-scale public cloud deployments, the architecture faces significant scaling challenges. A core structural issue at scale is its heavy reliance on a centralized control plane communicating over a single message queue system (RabbitMQ) to synchronize state across hundreds or thousands of distributed agents.
 
 ### Neutron architecture
 
@@ -56,17 +56,32 @@ The Neutron architecture is separated into distinct layers:
 
 ## IV. The "Full Sync" Problem
 
-- Openstack Neutron has a key mechanism called full sync. In general it’s a good idea that allows to make network consistent again relatively easy (especially for operations). But it can horribly backfire and one incident can cost a company millions of dollars.
+In general full sync is a good idea that allows to make network consistent again relatively easy (especially for operations team). But it can horribly backfire and one incident can cost a company millions of dollars. The way Neutron works, when ML2 Plugin receives new network updates (create network, create port, update a port and etc.) it pushes the messages for responsible agents via rabbit MQ it also records the state into controllers database.
 
-- Dive deep into the war story mentioned in the hook. Without networks VMs and basically whole infrastructure is useless.
+The queue helps to not overwhelm the agents with work and weaker hardware can used for these agents (that configure the dataplane e.g. ovs, l3, dhcp, meta).
 
-- Explain what a "full sync" is: A safety mechanism where an agent asks the controller for the entire state of the network to ensure it hasn't missed any messages.
+The problem with the queue is that messages can be lost and it's not easy to figure out that something actually was missed. For that full sync was created, agent requests the info from control database with all state information about dataplane for which agent is responsible. So using this mechanism we can do something simillar to git pull in software development and make our ports "up to date". The problem that this mechanism still uses rabbitMQ to get this information about the dataplane state. Even getting info about few virtual ports and applying them can take few minutes. Now imagine (and this actually happened) if datacenter looses energy or just few network nodes (servers that hold network agents) loose power. Let's look at the case when whole datacenter looses power. Suppose we solved the problem with energy and got electricity back, but our backup power didnt work (this also happened to me) and servers turned off. Getting back vms even when there is 160k+ vms (including large ones 128 cpu 1024 gb ram) can take at most 20 minutes, without the network Compute is useless. User's infrastructure cannot serve outside requests, computational clusters cannot communicate with each other during map reduce operations and many more. The problem is that with 160k+ vms we have something like 200k+ virtual neutron ports (almost real numbers I but not exact because it's a private information). For network nodes and agents these ports are basically gone, we need a full sync. For simplicity I will mention only neutron network ports as a primitive that dataplane manages as it is the lowest level primitive necessary for vm to communicate, besides vms there are other things like networks, subnetworks, virtual routers, load balancers and etc.
 
-- Explain the cascading failure: At 200k ports, the database is massive. When agents request a full sync, the Neutron server CPU spikes, the database gets hammered, and the RPC queue fills up. The system designed to heal the network effectively kills it.
+Now remember that it takes a few minutes to setup just a few ports, now remember that all of these updates have to go through one single messaging queue (or more accurately distrubuted but not really autoscalable, we cannot suddenly make it larger just for cases of outage) this queue is not really infinitely scalabale and has it's limits, it is able to process aprox 9k ports per hour. You see a problem? We managed to quickly get the power back up and running, we have mechanisms to spin up vms back automatically relatively fast, our ceph cluster and storage is also reliable and did not loose any data, we still have a third piece network. Because of the network our 30 min outage turned in almost whole day outage 20+ hrs.
 
-- Explain a real case scenario what happens if power is lost (most common case is when power is lost).
+
+
+There is another terrible problem. Almost all of the hyperscalers and large cloud providers (vk cloud is not exception) have a few clients, VIP clients that bring 80%+ of revenue. Ofcourse any cloud provider would say to you that they care about all and everyone, but in a real business world ofcourse top paying customers are top priority, they are a driving force for cloud providers growth, with large customers provider cannot really grow (hardware count, employees, functionaility and many more). In Fullsync the order of ports that are being restored is not really controlable, you cant say to neutron restore vip clients first. Network nodes (that hold agents that configure dataplane) dont really now about tenants (tenant is a like a project or account in AWS basically isolated set of workload, quotas, billing) and just restore all missing ports of vms that were there. So you get a stream of updates requested by each agent responsible for set of hypervisors which hold set of vms. One client wont hold all of his vms on one hypervisors, it can potentially be done via labels or taints but it's also bad idea especially if it's some RAFT database cluster, better to have vms of a cluster on different hypervisors preferably in different datacenters even. So you have scattered vms of one expensive clients across different hypervisors and you cannot really speedup restoration for this particular client without some significant efforts or manual intervention by SREs. And manual intervention is risky too because it can break full sync process and everything will have to be started over again or some portion of progress will be lost e.g. due to error from engineer (also what happened in my case).
+
+
+
+There other events or errors that can cause this cascading failure that can happen on several layers of the technical stack (server equipment failure, rabbitMQ outage and many more).
+
+
+
+Worth noting that these problems exist only in large scale public installations of openstack, originally openstack as a private cloud solution where you dont have this large amount of hypervisors, vms, users. But VK cloud is a hyperscaler and needs to keep it's great reputation, that's why a separate solution called SPRUT was created to combat problems of neutron. There is also alternative created by openstack called OVN but by the time SPRUT started development OVN wasnt mature enough. Also same API was needed for the smooth migration for clients from neutron to new stable sprut sdn that I am going to talk about in the next article.
 
 ## V. The Architectural Shift: Moving to the Modern Models
+
+Reference difference in neutron and sprut architectures (image 6) and how sprut solves sprut bottleneck.
+
+Explain how sprut works in more details and it's architecture which exactly does 2 jobs we mentioned in the beggining! NFV + SDN (it's a really good abstraction, ref. image 7)
+
 
 - Reference Column C ("The New Layer Model") in your diagram.
 
@@ -82,7 +97,7 @@ The Neutron architecture is separated into distinct layers:
 
 - Summarize the main takeaway: You cannot run a hyperscale cloud on an architecture designed for enterprise data centers.
 
-- The Teaser: End with a bridge to your next article. (e.g., "Fixing the communication bottleneck is only half the battle. In the next article, we will look at the Data Plane—how separating SDN from NFV prevents your virtual switches from collapsing under the weight of complex network services.")
+- The Teaser: End with a bridge to your next article. (e.g., "Fixing the communication bottleneck is only half the battle. In the next article, we will look at the Data Plane-how separating SDN from NFV prevents your virtual switches from collapsing under the weight of complex network services.")
 
 ## What is SDN? 8 layer model
 
@@ -172,7 +187,7 @@ https://habr.com/ru/companies/vk/articles/763760/
 
 Удешевление вычислительных ресурсов означало, что один простой сервер может хранить в себе и выполнять всю необходимую для большой сети логику по маршрутизации. Тут же обнаружились и дополнительные плюсы: бэкапы стало делать гораздо проще. 
 
-4D: Data plane (процессинг пакетов на основе правил), Discovery plane (сбор топологии и измерение), Dissemination plane (размещение правил для обработки пакетов), Decision plane (логическое объединение контроллеров, реализующих обработку пакетов). Появились определяющие проекты: Ethane, SANE. Ethane стал предтечей OpenFlow — дизайн системы стал первой версией OpenFlow API. 
+4D: Data plane (процессинг пакетов на основе правил), Discovery plane (сбор топологии и измерение), Dissemination plane (размещение правил для обработки пакетов), Decision plane (логическое объединение контроллеров, реализующих обработку пакетов). Появились определяющие проекты: Ethane, SANE. Ethane стал предтечей OpenFlow - дизайн системы стал первой версией OpenFlow API. 
 
 
 Openflow
