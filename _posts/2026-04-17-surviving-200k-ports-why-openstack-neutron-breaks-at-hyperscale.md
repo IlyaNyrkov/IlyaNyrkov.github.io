@@ -12,13 +12,27 @@ To prove to our clients that the new system would keep them safe, I spent months
 
 This article is a distillation of that unique, battle-tested knowledge. Before we talk about the caveats of live-migrating a hyperscale network (which I will cover in my next post), we need to understand the fundamental design flaws of legacy systems like neutron and what are modern alternatives like OVN<label for="sn-5" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-5" class="margin-toggle"/><span class="sidenote"><a href="https://www.ovn.org/en/">OVN (Open Virtual Network)</a> replaces legacy Neutron Python agents with lightweight, C-based daemons and uses OVSDB for distributed state management, significantly improving scaling capabilities.</span> and Sprut. Here is exactly why OpenStack Neutron breaks at hyperscale, and how modern SDNs solve the bottleneck.
 
+<br>
+
+## Table of Contents
+* [I. Reality of building scalable clouds](#i-reality)
+* [II. The Anatomy of a Cloud SDN](#ii-anatomy)
+* [III. Neutron architecture: Design and Scaling Considerations](#iii-neutron)
+* [IV. The "Full Sync" Disaster](#iv-disaster)
+* [V. The Architectural Shift: Moving to the Modern Models](#v-shift)
+* [VI. Solving the Full Sync Disaster](#vi-solving)
+* [VII. Conclusion and key takeaways](#vii-conclusion)
+* [VIII. References & Further Reading](#viii-references)
+
+---
+
 ## I. Reality of building scalable clouds
 
 Cloud computing is everywhere these days. The majority prefer hyperscalers, while others go for local or custom solutions. Building a cloud from scratch is a long, demanding project, so many opt for ready-to-go platforms where the groundwork is done, like OpenStack. While OpenStack is a monumental open-source achievement, it is fundamentally better suited for private clouds. In a public cloud at hyperscale, you hit hard limits.
 
 To understand why, we have to look at SDN (Software-Defined Networking). SDN is not just a tool for configuring many devices at once, like Ansible. It is a complete paradigm shift where the control plane is separated from the networking hardware into a single, centralized entity. SDN is the backbone of the cloud. It virtualizes hardware, isolates tenants, and provides the rapid elasticity (or autoscaling) and resource pooling required by NIST cloud standards. Without a working SDN, you have no cloud. But developing an SDN is incredibly hard, and fundamental flaws in its architecture can force you to rip it out and start over or do a very costly migration (like we did).
 
-## II. The Anatomy of a Cloud SDN
+## II. The Anatomy of a Cloud SDN {#ii-anatomy}
 
 ![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/sdn_taxonomy.png)
 
@@ -44,7 +58,7 @@ Before SDN, achieving multi-tenancy required a network engineer to manually conf
 **2. API-Driven Automation (Elasticity & Self-Service)**
 Without SDN, virtual machines spin up in seconds, but the network takes hours or days to configure. By exposing a central Northbound API, the SDN allows for On-Demand Self-Service. Load balancers, firewalls, and routers can be dynamically provisioned by automated scripts or users clicking a button in a UI, providing the Rapid Elasticity that defines modern cloud computing.
 
-## III. Neutron architecture: Design and Scaling Considerations
+## III. Neutron architecture: Design and Scaling Considerations {#iii-neutron}
 
 The architecture of OpenStack Neutron has distinct advantages, as it was originally designed to provide network-as-a-service for private clouds and enterprise environments. In deployments with a moderate number of hypervisors, its design works brilliantly to abstract complex networking.
 
@@ -153,7 +167,7 @@ But look closely at Step 5. What happens if that massive payload takes too long 
 Imagine a scenario where a rack switch reboots, causing 40 compute nodes to drop offline and request a full sync at the exact same second. As we will explore in the next section, this simple, self-healing loop transforms into a catastrophic, self-inflicted Denial of Service attack against the cloud's own control plane.
 
 
-## IV. The "Full Sync" Disaster
+## IV. The "Full Sync" Disaster {#iv-disaster}
 
 While the Full Sync mechanism is a reliable safety net for minor, everyday operational hiccups, at hyperscale, it can horribly backfire. A single incident can cost a company millions of dollars.
 
@@ -205,219 +219,223 @@ It is worth noting that these cascading failures exist only in large-scale publi
 
 But VK Cloud is a hyperscaler and must protect its reputation and its clients. That is why a separate, proprietary SDN solution called SPRUT was created to combat the limitations of Neutron. While the open-source community eventually developed OVN to solve these same issues, OVN was not mature enough when SPRUT development began. Furthermore, we needed a system that maintained the exact same API to ensure a smooth, zero-downtime migration for our clients.
 
-## V. The Architectural Shift: Moving to the Modern Models
+## V. The Architectural Shift: Moving to the Modern Models {#v-shift}
 
-To understand how both OVN and Sprut solve Neutron's fatal flaws, we first need to look at how the fundamental philosophy of Software-Defined Networking has evolved over the last decade.
+To understand how modern solutions like OVN and Sprut solve Neutron's fatal flaws, we first need to look at how the fundamental philosophy of Software-Defined Networking has evolved over the last decade.
 
 ![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/sdn_taxonomy.png)
 
-Looking at the architectural evolution in the diagram above, legacy Neutron was built on the concepts of early network virtualization (represented by Column b). It relied heavily on a top-down, imperative model. The central controller didn't just define what the network should look like; it sent explicit, transient RPC messages through RabbitMQ dictating exactly how to configure it, relying on agents to blindly execute heavy Linux shell commands. If a message was dropped, the state broke.
+Looking at the architectural evolution in the diagram above, legacy Neutron was built on the concepts of early network virtualization (Column B). It relied heavily on a top-down, imperative model.\<label for="sn-16" class="margin-toggle sidenote-number"\>\</label\>\<input type="checkbox" id="sn-16" class="margin-toggle"/\>\<span class="sidenote"\>The classical taxonomy in columns A and B is based on Diego Kreutz's foundational 2015 paper, \<em\>"Software-Defined Networking: A Comprehensive Survey."\</em\> While the concepts of plane separation remain true, the strict layer definitions have evolved significantly in modern cloud implementations.\</span\> The central controller didn't just define what the network should look like; it sent explicit, transient RPC messages dictating exactly *how* to configure it, relying on agents to blindly execute heavy Linux shell commands. If a message was dropped, the state broke.
 
-Modern SDNs, however, have shifted to the model shown in Column C. This is the era of Intent-Based APIs, Distributed Control Planes, and Programmable Data Planes.
+Modern SDNs have shifted to the model shown in Column C. This is the era of Intent-Based APIs, Distributed Control Planes, and Programmable Data Planes.
 
-Instead of shouting transient commands into a fragile message queue, the modern control plane simply stores a declarative "Target State" (the intent) in a high-speed database or REST API. The lightweight agents on the programmable data plane independently pull this state, compare it to their actual physical reality, and natively compile the differences directly into the virtual switches.
+Instead of shouting transient commands into a fragile message queue, the modern control plane stores a declarative "Target State" (the intent) in a high-speed database or REST API. Lightweight agents on the programmable data plane independently pull this state, compare it to their actual physical reality, and natively compile the differences directly into the virtual switches.
 
-This architectural shift-from imperative RPC messaging to declarative state reconciliation-is the absolute key to surviving hyperscale. Let's look at how the OpenStack community and VK Cloud independently implemented this exact shift to save their control planes.
+This architectural shift—from imperative RPC messaging to declarative state reconciliation—is the absolute key to surviving hyperscale. Let's look at how the OpenStack community and VK Cloud independently implemented this shift to save their control planes.
 
-### New Openstack standard: OVN
+### The New OpenStack Standard: OVN
 
-Before we dive into the proprietary solution (Sprut) that VK Cloud ultimately built, it is crucial to examine the open-source community's answer to Neutron's scalability crisis: OVN (Open Virtual Network).
+Before we dive into the proprietary solution (Sprut) that VK Cloud ultimately built, it is crucial to examine the open-source community's answer to Neutron's scalability crisis: **OVN (Open Virtual Network)**.\<label for="sn-17" class="margin-toggle sidenote-number"\>\</label\>\<input type="checkbox" id="sn-17" class="margin-toggle"/\>\<span class="sidenote"\>For a deeper dive into the open-source implementation, refer to the \<a href="[https://docs.openstack.org/ovn/latest/](https://www.google.com/search?q=https://docs.openstack.org/ovn/latest/)"\>official OpenStack OVN documentation\</a\> or the foundational architectural presentations from the Open vSwitch community.\</span\>
 
-First, let's clear up a common misconception: OVN does not replace Neutron entirely. Because OpenStack clients, automation scripts, and other services (like Nova) rely on the standard Neutron REST API, replacing the API would break the entire ecosystem.
+A common misconception is that OVN replaces Neutron entirely. It does not. Because OpenStack clients, automation scripts (like Terraform), and other core services (like Nova) rely strictly on the standard Neutron REST API, replacing the frontend would break the entire cloud ecosystem.
 
-Instead, OVN takes advantage of Neutron's Modular Layer 2 (ML2) design. It leaves the frontend API completely intact and radically guts and replaces the backend-stripping out RabbitMQ and the scattered Python agents in favor of a unified, database-driven control plane.
+Instead, OVN takes advantage of Neutron's Modular Layer 2 (ML2) design. It leaves the frontend API completely intact, but radically guts and replaces the backend. It strips out RabbitMQ and the scattered Python agents in favor of a unified, database-driven control plane.
 
-Historical Context: The OVN project was announced around 2015 by the Open vSwitch community. However, networking at a cloud scale is incredibly complex. It took roughly five years of intense development for OVN to achieve true feature parity with the legacy Neutron backend (supporting advanced features like Distributed Virtual Routing, complex Security Groups, and hardware offloading). It finally became the default backend in the OpenStack Ussuri release in 2020. This timeline is a critical piece of the puzzle regarding why VK Cloud began developing Sprut-we simply could not wait years for OVN to mature while our datacenter was growing at a hyperscale pace.
+**Historical Context:** The OVN project was announced around 2015 by the Open vSwitch community. However, achieving true feature parity with the legacy Neutron backend (supporting Distributed Virtual Routing, complex Security Groups, and hardware offloading) at a cloud scale took roughly five years. OVN finally became the default backend in the OpenStack Ussuri release in 2020. This timeline is a critical piece of the puzzle regarding why VK Cloud began developing Sprut—we simply could not wait years for OVN to mature while our datacenter was growing at a hyperscale pace.
 
 #### The Component Layers of OVN
+
 ![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/ovn_arch.png)
-Let’s break down how OVN fundamentally reorganizes the control plane layers, referencing the diagram above.
 
-##### 1. The Controller Layer
-The top layer still sits on your centralized control nodes, but it is vastly more sophisticated than legacy Neutron. It separates the "Cloud Management" state from the "Network Logic" state.
-* **Neutron API**: The exact same Python REST API frontend. Users notice no difference.
-* **Neutron DB (MySQL)**: Still present. It stores OpenStack-specific metadata (Tenant IDs, quotas, user billing info) that OVN doesn't care about.
+Let’s break down how OVN fundamentally reorganizes the control plane layers.
 
-* **ML2/OVN Plugin**: The universal translator. It catches API requests, reads the necessary metadata from MySQL, and translates the request into a purely logical network configuration.
+**1. The Controller Layer**
+The top layer still sits on centralized control nodes, but it separates the "Cloud Management" state from the "Network Logic" state:
 
-* **OVN Northbound DB (OVSDB)**: The store for the Target State. The ML2 plugin writes logical entities here (Logical Switches, Logical Routers, Logical Ports). It knows what the network should look like, but not where the VMs physically live.
+  * **Neutron API & MySQL DB:** The exact same frontend. Users notice no difference. The legacy database still stores OpenStack-specific metadata (Tenant IDs, quotas, billing info) that OVN doesn't care about.
+  * **ML2/OVN Plugin:** The universal translator. It catches API requests, strips away the OpenStack metadata, and translates the request into a purely logical network configuration.
+  * **OVN Northbound DB (OVSDB):** The store for the *Target State*. The ML2 plugin writes logical entities here (Logical Switches, Logical Routers). It knows what the network should look like, but not where the VMs physically live.
+  * **ovn-northd:** The central compiler daemon. It constantly monitors the Northbound DB and translates high-level logical concepts into millions of low-level logical flows (MAC lookups, ACLs, routing tables).
+  * **OVN Southbound DB (OVSDB):** The store for the *Actual State* and physical bindings. It contains the compiled logical flows from `ovn-northd` and tracks the physical location of every hypervisor (Chassis) and which VM is plugged into which host.
 
-* **ovn-northd**: The central compiler daemon. It constantly monitors the Northbound DB and translates those high-level logical concepts into millions of low-level logical flows (MAC lookups, ACLs, routing tables).
+**2. The Transport Layer (State Sync, not Messaging)**
+This is the most critical architectural shift. OVN completely removes the RabbitMQ asynchronous message bus. Instead, it relies on the **OVSDB protocol**, a database synchronization protocol. Rather than pushing transient messages into a queue, the control plane simply updates the Southbound DB. The agents independently connect to this database and synchronize only the rows that pertain to their specific physical hardware.
 
-* **OVN Southbound DB (OVSDB)**: The store for the Actual State and physical bindings. It contains the compiled logical flows from ovn-northd and tracks the physical location of every hypervisor (Chassis) and which VM is plugged into which host (Port Bindings).
+**3. The Agents Layer (The Unified Controller)**
+Legacy Neutron required up to five different Python daemons fighting for resources on every hypervisor. OVN replaces all of them with a single, highly efficient C-daemon: the **`ovn-controller`**.
 
-##### 2. The Transport Layer (State Sync, not Messaging)
-* **OVSDB Protocol**: This is the most critical architectural shift. OVN completely removes the RabbitMQ asynchronous message bus. Instead, it relies on the OVSDB protocol. This is a database synchronization protocol. Rather than shouting transient messages into a queue and hoping agents hear them, the control plane simply updates the Southbound DB. The agents independently connect to this database and synchronize only the rows that pertain to their specific physical hardware.
+**4. The Dataplane Layer**
+The underlying dataplane remains Open vSwitch. The `ovn-controller` receives state from the Southbound DB and programs it directly into the local OVS instance using OpenFlow rules. Because OVN handles L3 and DHCP natively inside the switch's flow tables, it largely eliminates the need to spin up messy Linux Network Namespaces (`netns`) and `dnsmasq` processes on the compute nodes.
 
-##### 3. The Agents Layer (The Unified Controller)
-* **OVN Controller (`ovn-controller`)**: Legacy Neutron required four or five different Python daemons (ovs-agent, l3-agent, dhcp-agent, metadata-agent) fighting for resources on every single hypervisor. OVN replaces all of them with a single, highly efficient daemon written in C. This single agent connects to the Southbound DB, downloads the physical flows, and handles L2 switching, L3 routing, DHCP, and NAT all by itself.
+#### The Paradigm Shift: Eliminating the Bottlenecks
 
-##### 4. The Dataplane Layer
-* **OVS (ovs-vswitchd & ovsdb-server)**: The underlying dataplane remains Open vSwitch. The `ovn-controller` receives the state from the Southbound DB and programs it directly into the local OVS instance using OpenFlow rules. Because OVN handles L3 and DHCP natively inside the switch's flow tables, it largely eliminates the need to spin up hundreds of messy Linux Network Namespaces (NetNS) and dnsmasq processes on the compute nodes.
-
-#### The Paradigm Shift: Eliminating the Architectural Bottlenecks
 ![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_ovn_comparison.png)
 
-If you look at the side-by-side comparison in the diagram above, you can see how OVN systematically dismantles the bottlenecks that made legacy Neutron so fragile at scale. The improvements boil down to a fundamental shift in how state is calculated, transported, and applied:
-* **Pre-Calculated State vs. On-the-Fly SQL**: In legacy Neutron, the ML2 plugin acts as a middleman that has to generate configuration states dynamically. Every time an agent requests an update, ML2 hits the MySQL database with complex JOIN queries, risking a total database lock. In OVN, this logic is decoupled. The ovn-northd daemon acts as a continuous background compiler. It translates high-level network logic into low-level OpenFlow rules before the agents even ask for it, storing the finalized rules in the Southbound DB. When an agent needs its state, the database simply performs a lightweight "Read" operation of pre-calculated data.
-* **State Synchronization vs. RPC Messaging**: Neutron used RabbitMQ-an asynchronous message broker-to distribute state. RPC (Remote Procedure Call) messages are inherently two-way, locking transactions that do not scale horizontally well for massive state synchronization. OVN replaces this with the OVSDB protocol, which is designed purely for database synchronization. More importantly, OVSDB can be deployed as a highly available Raft cluster with many replicas. You can have one Leader for writes and multiple Followers for read replicas, instantly distributing the load across the control plane.
-* **Payload Efficiency and Dataplane Complexity**: To configure a Neutron compute node, the control plane had to send massive JSON payloads detailing every single `iptables` rule, DHCP lease, and routing table entry. The Python agents then translated these into heavy Linux commands. OVN bypasses this completely. Because OVN handles L3 routing and DHCP natively inside the virtual switch, the payload sent to the agent consists of tiny, highly optimized binary OpenFlow rules.
-* **Agent Footprint**: Finally, as shown in the diagram, placing 4–5 heavy Python daemons (OVS, L3, DHCP, Metadata) on a single node created massive CPU overhead and multiplied the number of connections hitting the control plane. OVN consolidates this entire footprint into a single, lightweight C-daemon (`ovn-controller`).
+If you look at the side-by-side comparison above, you can see how OVN systematically dismantles the bottlenecks that made legacy Neutron so fragile:
 
-By separating the "Cloud Management" state from the "Network Logic," and replacing a fragile message queue with a resilient, replicable database protocol, OVN created an architecture capable of supporting thousands of hypervisors without collapsing under its own weight.
+  * **Pre-Calculated State vs. On-the-Fly SQL:** In Neutron, every agent request forces the ML2 plugin to hit MySQL with complex `JOIN` queries, risking a total database lock. In OVN, `ovn-northd` acts as a continuous background compiler. When an agent needs its state, it simply performs a lightweight "Read" operation of pre-calculated data from the Southbound DB.
+  * **State Synchronization vs. RPC Messaging:** RPC messages are inherently two-way, locking transactions that do not scale horizontally. OVN replaces this with OVSDB, which can be deployed as a highly available Raft cluster (one Leader for writes, multiple Followers for read replicas), instantly distributing the load across the control plane.
+  * **Agent Footprint & Payload Efficiency:** OVN consolidates 5 Python daemons into a single C-daemon. Furthermore, because OVN handles routing natively inside the virtual switch, the payload sent to the agent consists of tiny, highly optimized binary OpenFlow rules rather than heavy Linux shell commands.
 
 #### The Customization Trade-off: C vs. Python
-While OVN's architecture is significantly more robust and scalable than legacy Neutron, it comes with a major disadvantage for cloud operators: Extensibility.
 
-Legacy Neutron was written entirely in Python. If a cloud provider needed a custom networking feature, a proprietary traffic shaping rule, or a quick hotfix for a VIP client, their Site Reliability Engineers (SREs) could simply write a Python extension for the l3-agent or ovs-agent and deploy it.
+While OVN's architecture is significantly more robust, it comes with a major disadvantage for agile cloud operators: Extensibility.
 
-OVN is entirely different. While the ML2/OVN integration plugin is Python, the core engines that actually do the work (ovn-northd and `ovn-controller`) are written in C.
+Legacy Neutron was written entirely in Python. If SREs needed a custom traffic shaping rule or a hotfix for a VIP client, they could simply write a Python extension for the agent and deploy it. OVN is entirely different. The core engines that do the actual work (`ovn-northd` and `ovn-controller`) are written in C.
 
-Adding a fundamentally new dataplane feature is no longer a matter of writing a quick Python script. It requires writing C code, modifying the core OVN schema, compiling binaries, and often submitting the changes upstream to the Linux Foundation’s Open vSwitch community to ensure compatibility. For an agile cloud provider looking to rapidly deploy proprietary features, this language and architecture barrier represents a massive loss of flexibility.
+Adding a fundamentally new dataplane feature requires writing C code, modifying the core OVSDB schema, compiling binaries, and often submitting changes upstream to the Open vSwitch community to ensure compatibility. For a cloud provider looking to rapidly deploy proprietary features, this language barrier represents a massive loss of flexibility.
 
-### Proprietary solution: Sprut
+-----
 
-*(Note: The technical architecture and diagrams discussed in this section are based on engineering materials published by VK Cloud, specifically their deep-dive on the Habr platform.)*
+### The Proprietary Solution: Sprut
 
-#### Why VK Cloud Built Sprut (The Alternatives)
+*(Note: The technical architecture discussed in this section is based on engineering materials published by VK Cloud.)*
 
 When VK Cloud realized that legacy Neutron could no longer support our hyperscale growth, we established a strict set of requirements for a replacement SDN:
 
-1.  **100% Feature Parity:** Existing customer features could not be disabled; the new solution needed identical functionality out of the gate.
-2.  **L3 ToR Architecture:** Data center networks were built on an "L3 per rack" principle, requiring external traffic to be routed via BGP to the Top-of-Rack switches (which breaks legacy L2 broadcast protocols like VRRP).
-3.  **Massive Scalability:** The control plane had to shard or scale horizontally to eliminate bottlenecks and simplify incident resolution.
-4.  **Seamless Migration:** We needed to migrate 160,000+ VMs to the new SDN with zero downtime and no impact on the clients.
-5.  **Customization:** We required an open, modifiable architecture to rapidly build proprietary cloud features.
+1.  **100% Feature Parity:** Existing customer features could not be disabled.
+2.  **L3 ToR Architecture:** Data center networks were built on an "L3 per rack" principle, requiring external traffic to be routed via BGP to the Top-of-Rack switches.\<label for="sn-18" class="margin-toggle sidenote-number"\>\</label\>\<input type="checkbox" id="sn-18" class="margin-toggle"/\>\<span class="sidenote"\>L3 Top-of-Rack routing inherently breaks legacy Layer 2 broadcast protocols like VRRP, forcing the new SDN to handle High Availability routing natively without relying on broadcast domains.\</span\>
+3.  **Massive Scalability:** The control plane had to shard or scale horizontally to eliminate bottlenecks.
+4.  **Seamless Migration:** We needed to migrate 160,000+ VMs with zero downtime.
+5.  **Customization:** We required an open, modifiable architecture (unlike OVN) to rapidly build proprietary features.
 
-We evaluated the available open-source options against these requirements:
+Open-source alternatives like Tungsten Fabric were too complex and poorly documented for our timeline. Rewriting Neutron was a dead end. And OVN was still immature. Faced with these limitations, VK Cloud built **Sprut**—a custom, highly scalable SDN designed specifically to survive hyperscale workloads, written in approximately 15,000 lines of highly efficient code.
 
-  * **Tungsten Fabric:** While it supported L3 ToR routing and had broad functionality, its massive, poorly documented codebase and complex technology stack made rapid implementation and operation nearly impossible for our timeline.
-  * **Reworking Neutron:** A dead end. The necessary features were already there, but the fundamental architecture (centralized RPC queues) was inherently flawed for our scale. Reworking it would require a total rewrite of the core.
-  * **OVN:** As discussed earlier, OVN is now the industry standard. However, Sprut's development began around 2018–2019, long before OVN had reached maturity or feature parity. Furthermore, OVN's core is written in C, making rapid Python-based customization difficult. Finally, VK Cloud's OpenStack deployment had diverged from the main upstream branch over the years to serve specific business needs, making it too difficult to cleanly integrate a bleeding-edge OVN build.
-
-Faced with these limitations, VK Cloud made the decision to build **Sprut**-a custom, highly scalable SDN designed specifically to survive hyperscale workloads, written in approximately 15,000 lines of efficient code.
-
-#### The Paradigm Shift: From Events to a Closed Control Loop
+#### The Closed Control Loop
 
 ![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_sprut_comparsion.png)
 
-Before looking at the final layer design, we must look at how Sprut fundamentally redesigned the Transport Layer (as seen in the comparison diagram above).
+Before looking at the layer design, we must look at how Sprut fundamentally redesigned the Transport Layer.
 
-**The Death of the Queue (RabbitMQ -\> HTTP REST):**
-Legacy Neutron relied on an *event-driven* model. When a port changed, the ML2 plugin pushed a message into a RabbitMQ queue hoping the agent would receive it. Sprut completely eliminates RabbitMQ. It replaces the transport layer with a standard, highly scalable **HTTP REST API**.
+Legacy Neutron relied on an *event-driven* model. When a port changed, ML2 pushed a message into RabbitMQ hoping the agent would receive it. Sprut completely eliminates RabbitMQ, replacing the transport layer with a standard, highly scalable **HTTP REST API**.
 
-**The Closed Control Loop:**
 By moving to HTTP REST, Sprut shifts from an "Event-Driven" model to a **"Closed-Loop"** control theory model:
 
-1.  Sprut agents no longer wait passively for transient events to arrive from a central queue.
+1.  Sprut agents no longer wait passively for transient events from a central queue.
 2.  Instead, they continuously poll the HTTP REST API to request their "Target State."
-3.  The agent independently compares this Target State from the API against the "Actual State" of its local hardware.
-4.  If there is a difference (e.g., a new port needs to be wired, or a deleted rule needs to be removed), the agent applies *only the difference* to the local dataplane to minimize the error and bring the system into alignment.
+3.  The agent independently compares this Target State against the "Actual State" of its local hardware.
+4.  If there is a difference, the agent applies *only the difference* to the local dataplane to minimize the error and bring the system into alignment.
 
 #### The Component Layers of Sprut
 
 ![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/sprut_arch_detailed.png)
 
-While the HTTP REST loop fixed the transport layer, the underlying Open vSwitch dataplane can still be incredibly complex to debug across thousands of nodes. To simplify this, Sprut adopted a strict separation of concerns, splitting the architecture into three distinct layers (as seen in the finalized diagram).
+To simplify the complexities of debugging an Open vSwitch dataplane across thousands of nodes, Sprut adopted a strict separation of concerns.
 
-###### 1. The APP Layer (The Translator)
+**1. The APP Layer (The Translator)**
+This layer ensures complete API compatibility with OpenStack. The **Sprut Plugin** completely replaces the legacy ML2 plugin. It receives standard Neutron requests and translates them into distinct instructions for the underlying SDN and NFV layers.
 
-This layer ensures complete API compatibility with OpenStack, allowing for a seamless migration.
+**2. The NFV Layer (Network Function Virtualization)**
+This layer provides network features (primitives), not routing.
 
-  * **Neutron API:** The standard OpenStack frontend (identical to the user experience in Neutron or OVN).
-  * **Sprut Plugin:** This completely replaces the legacy ML2 plugin. It receives user requests (e.g., "Create a network") and translates them into a set of distinct instructions for the underlying SDN and NFV layers. It also includes a Nova Driver to ensure stable operation with the compute service.
+  * **NFV Agents:** These manage specific entities like DHCP servers, Virtual Routers, and Metadata Proxies.
+  * **Selective Placement:** Unlike Neutron, which forces heavy agents onto every compute node, Sprut's NFV agents only run on dedicated nodes selected by operations. This conserves critical CPU and RAM on the hypervisors for paying tenants.
 
-###### 2. The NFV Layer (Network Function Virtualization)
-
-This layer is responsible strictly for providing network features (primitives), not routing traffic.
-
-  * **NFV Agents & Controller:** These components manage specific network entities like DHCP servers, Virtual Routers, Floating IPs, and Metadata Proxies.
-  * **Selective Placement:** Unlike Neutron, which forces heavy agents (like the OVS and L3 agents) onto every single compute node, Sprut's NFV agents only run on dedicated nodes selected by the operations team. This conserves critical network resources, CPU, and RAM on the hypervisors for the paying tenants' VMs.
-
-###### 3. The SDN Layer (The Connectivity Engine)
-
+**3. The SDN Layer (The Connectivity Engine)**
 This layer is responsible purely for moving packets from Point A to Point B. It does not know what a "Router" or a "DHCP Server" is; it only operates using "Links" and "Endpoints."
 
-  * **Virtual Switches & Tunnels:** When SDN agents launch on the bare-metal hypervisors, they create virtual switches and establish tunnels between them. Tunnels can be configured for full connectivity, partial connectivity, or separated regions.
-  * **The Network Graph:** The SDN agents constantly monitor the tunnels by sending probe packets through them. They report the latency and status in real-time back to the SDN Controller. The controller uses this to build and constantly update a real-time graph where vertices are switches and edges are tunnels.
-  * **Dijkstra’s Routing:** An Endpoint is a connection point to the switch system, and a Link connects exactly two Endpoints. When a connection is required, the SDN Controller uses Dijkstra's algorithm on the network graph to find the absolute shortest path. It generates traffic forwarding rules specifying the port sequence and pushes them to the agents, functioning very similarly to the OSPF routing protocol.
+  * **The Network Graph:** SDN agents on the hypervisors create virtual switches and tunnels. They constantly monitor these tunnels by sending probe packets, reporting latency and status back to the SDN Controller in real-time. The controller uses this to build an active graph where vertices are switches and edges are tunnels.
+  * **Dijkstra’s Routing:** When a connection is required, the SDN Controller uses Dijkstra's algorithm on the network graph to find the absolute shortest path. It generates traffic forwarding rules specifying the exact port sequence and pushes them to the agents, functioning similarly to the OSPF routing protocol.
 
-##### The Workflow: Creating a Virtual Network in Sprut
+#### The Workflow: Creating a Virtual Network in Sprut
 
-By separating these concerns, creating a network becomes a clean, programmatic cascade:
+By separating these concerns, provisioning a network becomes a clean, programmatic cascade:
 
-1.  **User Request:** A user asks the standard Neutron API to create a virtual network.
-2.  **Translation:** The APP Layer (Sprut Plugin) receives the request and transforms it into a set of entities.
-3.  **Provisioning Primitives:** The APP layer tells the NFV Layer to spin up the necessary unattached entities (like a DHCP server).
-4.  **Logical Wiring:** The APP layer tells the SDN layer to create "Links" and "Endpoints" to connect these NFV entities together. At this point, the network exists, but it has no virtual machines.
-5.  **Compute Attachment:** The user tells Nova to boot a VM. The Nova-compute agent starts the QEMU process and asks the APP layer to connect the VM to the network.
-6.  **Finalizing the Route:** The APP layer generates a set of Link and Endpoint parameters to connect the VM to the switch. The SDN Controller determines the shortest path, and the closed-loop agent applies the rules to the local Open vSwitch. The VM is instantly online.
+1.  **User Request:** The user asks the standard Neutron API to create a virtual network.
+2.  **Translation:** The APP Layer transforms the request into distinct entities.
+3.  **Provisioning Primitives:** The APP layer instructs the NFV Layer to spin up the necessary unattached entities (e.g., a DHCP server).
+4.  **Logical Wiring:** The APP layer tells the SDN layer to create "Links" and "Endpoints" to connect these entities.
+5.  **Compute Attachment:** The user tells Nova to boot a VM. The Nova-compute agent starts the QEMU process and asks the APP layer to connect it to the network.
+6.  **Finalizing the Route:** The SDN Controller calculates the shortest path via Dijkstra's algorithm, and the closed-loop agent applies the rules to the local Open vSwitch. The VM is instantly online.
 
-## VI. Solving the Full Sync Disaster
+## VI. Solving the Full Sync Disaster {#vi-solving}
 
 In Chapter IV, we explored the nightmare scenario: a datacenter loses power, bringing down 3,000 hypervisors. When the servers reboot, the local network agents wake up with wiped memories and blindly demand their configuration state, creating a catastrophic Denial of Service loop that can take legacy Neutron over 20 hours to resolve.
 
 ![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/sdn_arch_comparison.png)
 
-Looking at the side-by-side architectural comparison above, we must ask a logical question: **If a datacenter loses power, 3,000 hypervisors wake up blind in Neutron, OVN, and Sprut alike. All three systems face the exact same stampede of 3,000 agents demanding their state. So why does Neutron collapse into a 20-hour DDoS loop, while OVN and Sprut recover in minutes?**
+Looking at the side-by-side architectural comparison above, we must ask a logical question: **If a datacenter loses power, 3,000 hypervisors wake up blind in Neutron, OVN, and Sprut alike. All three systems face the exact same stampede of agents demanding their state. So why does Neutron collapse into a 20-hour DDoS loop, while OVN and Sprut recover in minutes?**
 
-The answer lies in how these new architectures fundamentally process, package, and transport that state. Notably, the OpenStack Foundation (with OVN) and VK Cloud (with Sprut) arrived at strikingly similar architectural conclusions independently. Here is how these modern designs solve the Full Sync Disaster.
+The answer lies in how these new architectures fundamentally process, package, and transport that state. Notably, the OpenStack Foundation (with OVN) and VK Cloud (with Sprut) independently arrived at strikingly similar architectural conclusions. Here is how modern designs solve the Full Sync disaster.
 
 ### Pre-Calculated State: Stopping the Database Lock
 
-The single biggest failure point during a Neutron recovery is the central database. When 3,000 Neutron agents ask for a Full Sync, the ML2 plugin has to construct the state *on the fly*. It hits the MySQL database and executes thousands of heavy, multi-table `JOIN` queries simultaneously to figure out how security groups, subnets, and ports relate to each specific hypervisor. MySQL immediately locks up under the CPU load.
+The single biggest failure point during a Neutron recovery is the central database. When 3,000 Neutron agents ask for a Full Sync, the ML2 plugin has to construct the state *on the fly*. It queries the MySQL database and executes thousands of heavy, multi-table `JOIN` queries simultaneously to figure out how security groups, subnets, and ports relate to each specific hypervisor. MySQL immediately locks up under the CPU load.\<label for="sn-19" class="margin-toggle sidenote-number"\>\</label\>\<input type="checkbox" id="sn-19" class="margin-toggle"/\>\<span class="sidenote"\>Relational databases like MySQL use row-level or table-level locking during complex read/write transactions to maintain ACID compliance. When thousands of concurrent \<code\>JOIN\</code\> queries hit the database, these locks queue up, stalling the entire application layer.\</span\>
 
-Both OVN and Sprut solve this by cleanly separating "Cloud Management" (NeutronDB) from "Network Logic" (OVSDB / Sprut DB).
+Both OVN and Sprut solve this by cleanly separating "Cloud Management" (Neutron DB) from "Network Logic" (OVSDB / Sprut DB).
 
-  * **In OVN:** The `ovn-northd` daemon acts as a continuous background compiler. Long before the outage occurs, it translates high-level API concepts into low-level OpenFlow rules and stores them statically in the Southbound DB.
-  * **In Sprut:** A similar compilation happens before the agent ever requests it.
+  * **In OVN:** The `ovn-northd` daemon acts as a continuous background compiler. Long before an outage occurs, it translates high-level API concepts into low-level OpenFlow rules and stores them statically in the Southbound DB.
+  * **In Sprut:** A similar compilation process happens before the agent ever requests it.
 
-When 3,000 agents wake up in these modern systems, there is no compiling or SQL `JOIN`ing to do. The Southbound DB (or Sprut's HTTP REST backend) simply hands over the pre-calculated rows that belong to that chassis. It is a simple "Read" operation, which modern databases can perform millions of times a second without locking.
+When 3,000 agents wake up in these modern systems, there is no compiling or SQL `JOIN`ing left to do. The Southbound DB (or Sprut's HTTP REST backend) simply hands over the pre-calculated rows that belong to that specific chassis. It is a simple "Read" operation, which modern databases can perform millions of times a second without locking.
 
 ### The Right Transport: State Sync vs. RPC Queues
 
-When OpenStack was designed in 2010, the architectural standard dictated that all services must communicate via an AMQP message bus (RabbitMQ). This is excellent for asynchronous, one-off tasks (e.g., "Start this VM"). However, configuring a dataplane is continuous state synchronization. Using a task queue for state sync is like trying to use a mailbox to stream a 4K movie. Furthermore, an RPC request is inherently a two-way, locking transaction that scales poorly.
+When OpenStack was designed in 2010, architectural standards dictated that all services must communicate via an AMQP message broker (RabbitMQ). This is excellent for asynchronous, one-off tasks—like instructing Nova to start a VM. However, configuring a dataplane requires continuous *state synchronization*. Using a task queue for massive state replication is like trying to stream a 4K movie through the postal service. Furthermore, an RPC request is inherently a two-way, locking transaction that scales poorly.
 
 Modern SDNs abandoned the queue in favor of protocols actually designed for state replication:
 
-  * **OVSDB Read Replicas:** OVN uses the OVSDB protocol, which operates on a Raft cluster. You have one Leader for writes and multiple Followers for reads. When 3,000 hypervisors wake up, they connect to the read-only Followers, instantly distributing the stampede load across the cluster.
-  * **HTTP REST Caching:** Sprut utilizes a standard HTTP REST API. If 3,000 nodes execute standard `GET` requests simultaneously, the autoscaling API fleet-backed by standard load balancers and caching layers-easily serves the pre-calculated Target State. There are no fragile message queues to overflow and no timeout-retry loops.
+  * **OVSDB Read Replicas:** OVN uses the OVSDB protocol, which operates on a Raft cluster.\<label for="sn-20" class="margin-toggle sidenote-number"\>\</label\>\<input type="checkbox" id="sn-20" class="margin-toggle"/\>\<span class="sidenote"\>Raft is a consensus algorithm designed to manage a replicated log. It allows a cluster of servers to maintain a highly available state machine, guaranteeing that all nodes agree on the data even if some servers fail.\</span\> You have one Leader for writes and multiple Followers for reads. When 3,000 hypervisors wake up, they connect to the read-only Followers, instantly distributing the stampede load across the cluster.
+  * **HTTP REST Caching:** Sprut utilizes a standard HTTP REST API. If 3,000 nodes execute standard `GET` requests simultaneously, the autoscaling API fleet—backed by standard load balancers and caching layers—easily serves the pre-calculated Target State.\<label for="sn-21" class="margin-toggle sidenote-number"\>\</label\>\<input type="checkbox" id="sn-21" class="margin-toggle"/\>\<span class="sidenote"\>Standard REST HTTP allows for the use of ETags. If an agent requests state and the ETag hasn't changed, the server just returns a \<code\>304 Not Modified\</code\> header without sending a payload, saving massive amounts of bandwidth.\</span\> There are no fragile message queues to overflow and no timeout-retry loops.
 
 ### Payload Efficiency: Micro-Diffs vs. Megabytes
 
-To restore a legacy Neutron compute node, the Full Sync payload must contain massive JSON files detailing every single `iptables` rule, DHCP lease, and routing table entry. It is megabytes of data per node, processed by bloated Python wrappers executing standard Linux shell commands.
+To restore a legacy Neutron compute node, the Full Sync payload must contain massive JSON files detailing every single `iptables` rule, DHCP lease, and routing table entry. It is megabytes of data per node, processed by Python wrappers executing heavy Linux shell commands.
 
-OVN and Sprut program the Open vSwitch directly in C using native OpenFlow rules. The payload difference is staggering.
-  * OVN simply downloads highly optimized binary flow tables.
-  * Sprut downloads a lightweight topology of "Links" and "Endpoints," compares its current state to the Target State, and applies *only the differences*. A smaller payload means the physical network doesn't congest, the agent processes the diff in milliseconds, and the node is online instantly.
+OVN and Sprut program the Open vSwitch directly in C or via native OpenFlow rules. The payload difference is staggering:
 
-#### Execution Efficiency and the Dataplane Abstraction
+  * **OVN** downloads highly optimized, binary OpenFlow tables.
+  * **Sprut** downloads a lightweight topology of "Links" and "Endpoints," compares its current state to the Target State, and applies *only the differences*. A smaller payload means the physical network doesn't congest, the agent processes the diff in milliseconds, and the node is online instantly.
+
+### Execution Efficiency and the Dataplane Abstraction
+
 Finally, we must look at what the agents are actually forced to *do* when they receive their state.
 
-In a legacy Neutron deployment, the 3,000 compute nodes primarily run the `ovs-agent`. While routing and DHCP are kept on separate Network Nodes, the `ovs-agent` is still responsible for port bindings and Security Groups. To restore a node, Neutron sends a massive JSON payload. The bloated Python agent then executes hundreds of heavy Linux shell commands (like `iptables` or `ovs-ofctl`) to wire up the host. This grinds the hypervisor's CPU to a halt and drastically slows down the central queue processing.
+In a legacy Neutron deployment, the 3,000 compute nodes primarily run the `ovs-agent`. While routing and DHCP are kept on separate Network Nodes, the `ovs-agent` is still responsible for port bindings and Security Groups. To restore a node, the bloated Python agent must execute hundreds of heavy Linux shell commands (like `iptables` or `ovs-ofctl`) to wire up the host.\<label for="sn-22" class="margin-toggle sidenote-number"\>\</label\>\<input type="checkbox" id="sn-22" class="margin-toggle"/\>\<span class="sidenote"\>Historically, Neutron used \<code\>iptables\</code\> and Linux bridges alongside OVS to handle Security Groups because OVS lacked native stateful firewall capabilities. Modern OVS supports native connection tracking (conntrack), eliminating the heavy Linux bridge overhead.\</span\> This grinds the hypervisor's CPU to a halt and drastically slows down the central queue processing.
 
 Modern SDNs bypass this messy execution model entirely:
-* **OVN’s Native OpenFlow:** OVN consolidates the agent footprint into a single, highly efficient C-daemon (`ovn-controller`). But more importantly, it eliminates the need for messy Linux network namespaces and `dnsmasq` processes entirely. It implements DHCP and Routing *natively* inside the virtual switch's OpenFlow tables. The payload is small, and applying binary OpenFlow rules takes milliseconds.
-* **Sprut’s Strict Separation of Concerns:** Sprut took this optimization a step further through its strict **SDN / NFV split**. Like Neutron, Sprut isolates heavy primitives (DHCP, Routers, Metadata) onto dedicated network nodes. However, Sprut completely decouples their data models. When the 3,000 compute nodes wake up blind, their lightweight SDN agents only ask the HTTP REST API for their simple L2 switching topology graph (Links and Endpoints) to run Dijkstra’s algorithm. Because the compute agents are completely abstracted away from the heavy NFV logic, the data they must pull is incredibly small. They pull their graph, apply the rules, and the nodes are online instantly without dragging down the control plane.
 
-## VII. Conclusion and key takeaways
+  * **OVN’s Native OpenFlow:** OVN consolidates the agent footprint into a single, highly efficient C-daemon (`ovn-controller`). More importantly, it eliminates the need for messy Linux network namespaces and `dnsmasq` processes entirely. It implements DHCP and Routing *natively* inside the virtual switch's OpenFlow tables. The payload is small, and applying binary OpenFlow rules takes milliseconds.
+  * **Sprut’s Strict Separation of Concerns:** Sprut took this optimization a step further through its strict **SDN / NFV split**. Like Neutron, Sprut isolates heavy primitives (DHCP, Routers, Metadata) onto dedicated network nodes. However, Sprut completely decouples their data models. When the 3,000 compute nodes wake up blind, their lightweight SDN agents only ask the HTTP REST API for their simple L2 switching topology graph to run Dijkstra’s algorithm. Because the compute agents are completely decoupled from the heavy NFV logic, the data they must pull is incredibly small. They download their local graph, apply the rules, and bring the nodes online instantly without dragging down the control plane.
 
-- Summarize the main takeaway: You cannot run a hyperscale cloud on an architecture designed for enterprise data centers.
+## VII. Conclusion and key takeaways {#vii-conclusion}
 
-- The Teaser: End with a bridge to your next article. (e.g., "Fixing the communication bottleneck is only half the battle. In the next article, we will look at the Data Plane-how separating SDN from NFV prevents your virtual switches from collapsing under the weight of complex network services.")
+A 20-hour datacenter outage is a brutal teacher. The fundamental lesson we learned at VK Cloud is that you cannot simply scale a private cloud architecture into a public hyperscaler by throwing more hardware at it. OpenStack Neutron is a phenomenal piece of software for its intended use case, but a design that relies on centralized, imperative message queues is a ticking time bomb when stretched across 3,000 hypervisors.
 
-## Sources
-https://habr.com/ru/companies/vktech/articles/1000332/
+For infrastructure engineers, architects, and SREs building or maintaining large-scale distributed systems, the evolution from Neutron to modern SDNs like OVN and Sprut offers several critical architectural takeaways:
 
-https://github.com/vktechdev/evpn_connector
+1. State Synchronization Beats Message Queues: Task queues (like RabbitMQ) are for asynchronous events ("Start this VM"). They are the wrong tool for continuous dataplane replication. For massive state synchronization, you must use purpose-built database replication protocols (like Raft-backed OVSDB) or heavily cached HTTP REST APIs.
 
-https://cloudification.io/cloud-blog/understanding-openstack-nova-cells-scaling-compute-across-data-centers/
+2. Declarative (Closed-Loop) Beats Imperative: Systems fail when agents wait passively for transient instructions. Modern agents must be autonomous—continuously polling a declarative "Target State" and natively reconciling the differences against their local hardware.
 
-https://superuser.openinfra.org/articles/openstack-neutron-networking-in-cloud-demystified/
+3. Pre-Calculation Prevents Database Locks: Never design a system that generates complex state on the fly during a recovery storm. The control plane must continuously pre-compile high-level API intent into low-level dataplane rules in the background, so recovery is just a fast, lock-free database "Read."
 
-https://aptira.com/theory-of-everything-in-neutron/
+4. Strict Separation of Concerns (SDN vs. NFV): Do not force compute hypervisors to process heavy network services (DHCP, NAT, Metadata). Keep compute agents lightweight—focused purely on simple L2 switching and Dijkstra routing—and offload the heavy stateful services to dedicated Network Nodes. This keeps the recovery payload tiny and saves CPU cycles for the paying tenants.
 
-https://wiki.openstack.org/wiki/Neutron
+#### The Next Challenge: Swapping the Engine in Flight
+Designing a modern SDN that solves these mathematical bottlenecks on paper is a massive engineering achievement. But architecting a new system is only half the battle. The true nightmare is operational.
 
-comprehensive survey on sdn - https://www.cs.utsa.edu/~korkmaz/teaching/ds-resources/sharvari-papers/survey-2015-Kreutz-sdn-comp-survey.pdf
+How do you take a live hyperscaler with 160,000 running VMs, rip out its nervous system (Neutron), and replace it with a new one (Sprut)?<label for="sn-23" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-23" class="margin-toggle"/><span class="sidenote">In cloud infrastructure, this is the equivalent of swapping out the engine of a commercial airliner while it is flying at 30,000 feet. The clients do not care about your technical debt; they only care about their uptime.</span>
 
+That requires meticulous live-migration strategies, custom translation tooling, and a lot of nerve. In the next article, we will dive into the exact caveats, pitfalls, and strategies we used to successfully migrate a 200,000-port network from legacy Neutron to Sprut with zero downtime.
+
+## VIII. References & Further Reading {#viii-references}
+
+The architectural models, technical limitations, and historical context discussed in this article are synthesized from a combination of hands-on hyperscale engineering experience and the following foundational resources.
+
+**SDN Fundamentals & Academic Theory**
+* [Software-Defined Networking: A Comprehensive Survey](https://ieeexplore.ieee.org/document/6994333) *(IEEE Xplore, 2015)* – The foundational paper by Diego Kreutz et al. that established the classic Data, Control, and Management plane taxonomy used in early SDN models.
+
+**Legacy OpenStack & Neutron Architecture**
+* [The Theory of Everything in Neutron](https://aptira.com/theory-of-everything-in-neutron/) *(Aptira)* – An excellent deep-dive into the raw mechanics and daemons that make up legacy Neutron.
+* [OpenStack Neutron Networking in the Cloud Demystified](https://superuser.openinfra.org/articles/openstack-neutron-networking-in-cloud-demystified/) *(OpenInfra Superuser)* – A breakdown of the original architectural goals of OpenStack networking.
+* [Understanding OpenStack Nova Cells](https://cloudification.io/cloud-blog/understanding-openstack-nova-cells-scaling-compute-across-data-centers/) *(Cloudification)* – Context on how OpenStack shards the compute plane (and why this doesn't save the network control plane).
+* [OpenStack Neutron Official Wiki](https://wiki.openstack.org/wiki/Neutron) – The historical and technical documentation for the legacy networking project.
+
+**The OVN (Open Virtual Network) Evolution**
+* [OVN Architecture and Overview](https://www.openvswitch.org/support/slides/OVN_Austin.pdf) *(Open vSwitch)* – Presentation slides from the architects of OVN detailing the shift to OVSDB and logical flows.
+* [Networking with Open Virtual Network](https://docs.redhat.com/de/documentation/red_hat_openstack_platform/14/html/networking_with_open_virtual_network/open_virtual_network_ovn) *(Red Hat OpenStack Platform Docs)* – Enterprise documentation on how OVN integrates with ML2 and the Southbound/Northbound databases.
+* [OpenStack OVN Charm Administration Guide](https://docs.openstack.org/charm-guide/latest/admin/networking/ovn/index.html) *(OpenStack Docs)* – Practical deployment architecture for modern OVN controllers.
+
+**Hyperscale Implementation (VK Cloud & Sprut)**
+* [Architecture and Evolution of SDN at VK Cloud](https://habr.com/ru/companies/vk/articles/763760/) *(Habr)* – The primary engineering deep-dive published by the VK Cloud team detailing the proprietary Sprut architecture, the shift to HTTP REST, and the SDN/NFV split. *(Available in Russian, but diagrams are in English)*
