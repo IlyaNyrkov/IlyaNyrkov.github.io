@@ -1,4 +1,7 @@
-# About
+---
+layout: page
+title: About
+---
 
 I'm Ilya Nyrkov. I build low-level compute clusters and deployment pipelines for hyper-scale machine learning systems. Currently, I am an HPC Researcher at the Technical University of Munich (TUM). Previously, I was a Lead Cloud Architect at VK Cloud.
 
