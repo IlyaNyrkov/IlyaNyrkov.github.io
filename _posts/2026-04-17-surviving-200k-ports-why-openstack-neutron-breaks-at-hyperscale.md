@@ -72,7 +72,12 @@ At hyperscale, this architecture faces severe challenges. Its core structural vu
 
 ### The Component Layers of Neutron
 
-![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_arch.png)
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_arch.png" alt="Neutron Architecture Diagram" />
+  <figcaption>
+    <strong>Fig. 2.</strong> The standard component layers of OpenStack Neutron, illustrating the path from the end-user API down to the data plane.
+  </figcaption>
+</figure>
 
 The legacy Neutron architecture can be separated into four distinct layers:
 1. **The Controller Layer (The API and Plugins)**
@@ -100,7 +105,12 @@ User requests hit the Neutron API. This API is bundled with core plugins-most no
 
 ### Typical Neutron Hyperscale Deployment
 
-![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_deployment.png)
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_deployment.png" alt="Neutron Hyperscale Deployment Topology" />
+  <figcaption>
+    <strong>Fig. 3.</strong> A typical OpenStack Neutron hyperscale deployment topology, detailing the distribution of controller, network, and compute nodes.
+  </figcaption>
+</figure>
 
 To understand why legacy OpenStack breaks at hyperscale, we must look at how it is physically deployed. The diagram above represents a standard, highly available deployment model.
 
@@ -125,7 +135,12 @@ While this hardware design is robust and effectively eliminates physical single 
 
 ### Workflow Example: Port Creation (The Happy Path)
 
-![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/port_creation_workflow.png)
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/port_creation_workflow.png" alt="Port Creation Workflow" />
+  <figcaption>
+    <strong>Fig. 4.</strong> The standard "happy path" sequence of operations during a port creation workflow in Neutron.
+  </figcaption>
+</figure>
 
 Now let’s look at how the software overlay manipulates the hardware. We will trace the most common operation in OpenStack: creating a virtual network port. In a healthy cloud, this relies on asynchronous message passing. Follow the numbered circles on the diagram.
 
@@ -147,7 +162,12 @@ Because OpenStack relies on decentralized agents, it requires a fail-safe to cor
 
 ### Workflow Example: Network Node Full Sync
 
-![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_fullsync.png)
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_fullsync.png" alt="Network Node Full Sync Workflow" />
+  <figcaption>
+    <strong>Fig. 5.</strong> The sequence of events triggered during a network node full state synchronization.
+  </figcaption>
+</figure>
 
 At its core, a cloud environment is a massive state machine. The fundamental promise of OpenStack is that the physical reality of the datacenter (Actual State) must strictly mirror the central database (Target State).
 
@@ -183,7 +203,12 @@ When those 3,000+ hypervisors power back on, their local network agents wake up 
 
 ### The Thundering Herd and the Timeout Loop
 
-![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/full_sync_disaster.png)
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/full_sync_disaster.png" alt="Thundering Herd Problem" />
+  <figcaption>
+    <strong>Fig. 6.</strong> The "thundering herd" disaster scenario, where massive simultaneous retries from compute agents cause RabbitMQ queue overflows and database locks.
+  </figcaption>
+</figure>
 
 This is where the architecture crumbles. All 3,000 hypervisors simultaneously fire RPC requests into RabbitMQ, demanding the state of their respective dataplane entities.
 
@@ -195,7 +220,12 @@ What does the agent do? It aggressively fires another Full Sync request into the
 
 ### The VIP Client Dilemma
 
-![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/full_sync_port_order_problem.png)
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/full_sync_port_order_problem.png" alt="VIP Client Port Ordering Dilemma" />
+  <figcaption>
+    <strong>Fig. 7.</strong> The VIP client dilemma, illustrating the consequences of sequential port UUID processing and unpredictable port ordering during a sync.
+  </figcaption>
+</figure>
 
 During a 20-hour outage, business priorities become critical. Almost all large cloud providers have VIP clients that bring in 80%+ of the revenue. They are the driving force for any provider's growth. They also have tighter SLAs. Naturally, you want to restore their networks first.
 
@@ -227,7 +257,13 @@ But VK Cloud is a hyperscaler and must protect its reputation and its clients. T
 
 To understand how modern solutions like OVN and Sprut solve Neutron's fatal flaws, we first need to look at how the fundamental philosophy of Software-Defined Networking has evolved over the last decade.
 
-![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/sdn_taxonomy.png)
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/sdn_taxonomy.png" alt="SDN Taxonomy Diagram" />
+  <figcaption>
+    <strong>Fig. 1.</strong> Software-Defined Networks in (a) planes, (b) legacy layers, and (c) modern layers.
+  </figcaption>
+</figure>
+
 
 Looking at the architectural evolution in the diagram above, legacy Neutron was built on the concepts of early network virtualization (Column B). It relied heavily on a top-down, imperative model.<label for="sn-16" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-16" class="margin-toggle"/><span class="sidenote">The classical taxonomy in columns A and B is based on Diego Kreutz's foundational 2015 paper, <em>"Software-Defined Networking: A Comprehensive Survey."</em> While the concepts of plane separation remain true, the strict layer definitions have evolved significantly in modern cloud implementations.</span> The central controller didn't just define what the network should look like; it sent explicit, transient RPC messages dictating exactly *how* to configure it, relying on agents to blindly execute heavy Linux shell commands. If a message was dropped, the state broke.
 
@@ -249,7 +285,12 @@ Instead, OVN takes advantage of Neutron's Modular Layer 2 (ML2) design. It leave
 
 #### The Component Layers of OVN
 
-![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/ovn_arch.png)
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/ovn_arch.png" alt="OVN Architecture Diagram" />
+  <figcaption>
+    <strong>Fig. 8.</strong> The component layers of Open Virtual Network (OVN), highlighting the OVSDB transport and controller agent layers.
+  </figcaption>
+</figure>
 
 Let’s break down how OVN fundamentally reorganizes the control plane layers.
 
@@ -273,7 +314,12 @@ The underlying dataplane remains Open vSwitch. The `ovn-controller` receives sta
 
 #### The Paradigm Shift: Eliminating the Bottlenecks
 
-![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_ovn_comparison.png)
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_ovn_comparison.png" alt="Neutron vs OVN Architecture Comparison" />
+  <figcaption>
+    <strong>Fig. 9.</strong> A side-by-side architectural comparison of traditional Neutron versus OVN, demonstrating the shift in state management and transport mechanisms.
+  </figcaption>
+</figure>
 
 If you look at the side-by-side comparison above, you can see how OVN systematically dismantles the bottlenecks that made legacy Neutron so fragile:
 
@@ -307,7 +353,12 @@ Open-source alternatives like Tungsten Fabric were too complex and poorly docume
 
 #### The Closed Control Loop
 
-![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_sprut_comparsion.png)
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/neutron_sprut_comparsion.png" alt="Neutron vs Sprut Architecture Comparison" />
+  <figcaption>
+    <strong>Fig. 10.</strong> Architectural comparison showing traditional Neutron versus the Sprut framework, highlighting the use of an HTTP REST API to achieve a closed control loop.
+  </figcaption>
+</figure>
 
 Before looking at the layer design, we must look at how Sprut fundamentally redesigned the Transport Layer.
 
@@ -322,7 +373,12 @@ By moving to HTTP REST, Sprut shifts from an "Event-Driven" model to a **"Closed
 
 #### The Component Layers of Sprut
 
-![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/sprut_arch_detailed.png)
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/sprut_arch_detailed.png" alt="Detailed Sprut Architecture Diagram" />
+  <figcaption>
+    <strong>Fig. 11.</strong> The detailed component layers of the Sprut architecture, illustrating the separation of SDN and NFV controllers and the use of an HTTP REST API for transport.
+  </figcaption>
+</figure>
 
 To simplify the complexities of debugging an Open vSwitch dataplane across thousands of nodes, Sprut adopted a strict separation of concerns.
 
@@ -356,7 +412,12 @@ By separating these concerns, provisioning a network becomes a clean, programmat
 
 In Chapter IV, we explored the nightmare scenario: a datacenter loses power, bringing down 3,000 hypervisors. When the servers reboot, the local network agents wake up with wiped memories and blindly demand their configuration state, creating a catastrophic Denial of Service loop that can take legacy Neutron over 20 hours to resolve.
 
-![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/sdn_arch_comparison.png)
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/sdn_arch_comparison.png" alt="SDN Architecture Comparison: Neutron, OVN, and Sprut" />
+  <figcaption>
+    <strong>Fig. 12.</strong> A comprehensive architectural comparison of Neutron, OVN, and Sprut, highlighting the evolution of transport mechanisms and state management across the different SDN approaches.
+  </figcaption>
+</figure>
 
 Looking at the side-by-side architectural comparison above, we must ask a logical question: **If a datacenter loses power, 3,000 hypervisors wake up blind in Neutron, OVN, and Sprut alike. All three systems face the exact same stampede of agents demanding their state. So why does Neutron collapse into a 20-hour DDoS loop, while OVN and Sprut recover in minutes?**
 
