@@ -35,7 +35,7 @@ To understand why, we have to look at SDN (Software-Defined Networking). SDN is 
 ## II. The Anatomy of a Cloud SDN {#ii-anatomy}
 Before we dive into how OpenStack Neutron fails, we need to define what a modern Software-Defined Network actually looks like.
 
-<figure>
+<figure class="center-caption">
   <img src="/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/sdn_taxonomy.png" alt="SDN Taxonomy Diagram" />
   <figcaption>
     <strong>Fig. 1.</strong> Software-Defined Networks in (a) planes, (b) legacy layers, and (c) modern layers.

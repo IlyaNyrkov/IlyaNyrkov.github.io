@@ -457,3 +457,14 @@ label.margin-toggle:not(.sidenote-number) {
         width: 100%;
     }
 }
+
+/* Custom class to center captions under figures */
+figure.center-caption figcaption {
+    float: none;
+    clear: both;
+    margin-right: 0;
+    max-width: 100%;
+    text-align: center;
+    margin-top: 1rem;
+    display: block;
+}
