@@ -33,10 +33,14 @@ Cloud computing is everywhere these days. The majority prefer hyperscalers, whil
 To understand why, we have to look at SDN (Software-Defined Networking). SDN is not just a tool for configuring many devices at once, like Ansible. It is a complete paradigm shift where the control plane is separated from the networking hardware into a single, centralized entity. SDN is the backbone of the cloud. It virtualizes hardware, isolates tenants, and provides the rapid elasticity (or autoscaling) and resource pooling required by NIST cloud standards. Without a working SDN, you have no cloud. But developing an SDN is incredibly hard, and fundamental flaws in its architecture can force you to rip it out and start over or do a very costly migration (like we did).
 
 ## II. The Anatomy of a Cloud SDN {#ii-anatomy}
-
-![alt text](/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/sdn_taxonomy.png)
-
 Before we dive into how OpenStack Neutron fails, we need to define what a modern Software-Defined Network actually looks like.
+
+<figure>
+  <img src="/assets/img/2026-04-17-surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/sdn_taxonomy.png" alt="SDN Taxonomy Diagram" />
+  <figcaption>
+    <strong>Fig. 1.</strong> Software-Defined Networks in (a) planes, (b) legacy layers, and (c) modern layers.
+  </figcaption>
+</figure>
 
 At its core, SDN breaks vertical integration. Traditionally, networking vendors built routers and switches that contained both the forwarding hardware and the complex routing logic inside the same physical box. SDN rips these apart, separating the network's "brain" from its "muscle" (as seen in Figure 1, Column A).
 * **The Data Plane (The Muscle)**: The underlying hardware or virtual switches become simple, fast forwarding devices. They don't think; they just move packets based on strict rules pushed down to them.
