@@ -79,23 +79,109 @@ My team and I sat directly with their engineers. We developed the [Public API-ba
 This migration required late-night maintenance windows, manipulating Terraform state files, and convincing CTOs that a brief 20-second network disconnect for their VMs was a necessary trade-off for the long-term survival and speed of their infrastructure.
 
 
-## II. The Philosophy of Migration: State Machines vs. Database intervention
+## II. The Philosophy of Migration: State Machines vs. Database Intervention
 
-* Why we abandoned the "perfect" backend SRE tool for Public API scripts.
+Before writing a single script or scheduling a maintenance window, we had to determine the architectural philosophy of the migration. When moving 200,000 virtual ports, the decision of *how* to interact with the cloud—via public APIs or through direct database manipulation—dictates the entire risk profile of the project.
 
-* Treating the cloud as a State Machine.
+### The Cloud as a State Machine
 
-* Reducing the blast radius (why moving VIPs saved the legacy Neutron users too).
+![alt text](/assets/img/2026-04-27-migrating-200-000-network-ports/cloud_state_machine.png)
 
-## III. The Engineering Methodology: Dependency Graphing
+At its core, a cloud environment can be viewed as a massive state machine. As shown in the simplified model above, external users interact with a Public API to declare their desired infrastructure state (e.g., "Create a network with this CIDR block"). The Cloud Control Plane accepts these requests, writes the "Target State" to the central database, and continuously works to synchronize the physical hardware with that database.
 
+The safest way to change the state of physical infrastructure is strictly through the Public API. When a request comes through the front door, the Control Plane executes a gauntlet of safety checks: it verifies quotas, checks for physical resource availability, validates parameter formatting, and prevents security exploits. This rigorous validation is what guarantees the reliability of the cloud and ensures the database remains uncorrupted. 
+
+However, safety comes at a cost. At hyperscale, executing millions of API calls and waiting for validation checks takes significant time. To speed up operations, engineers are often tempted to bypass the Public API and interact directly with the physical infrastructure or private, unrestricted administrative APIs. While faster, this direct intervention removes the safety net, significantly increasing the risk of state corruption.
+
+### Mapping Migration to the SDN Layers
+
+![alt text](/assets/img/2026-04-27-migrating-200-000-network-ports/sdn_layers.png)
+
+This state machine philosophy maps directly onto the architecture of a Software-Defined Network. As established in the previous article, SDN separates the Control Plane from the Data Plane. Crucially, it introduces different levels of access:
+
+* **Northbound Interfaces (The Safe Path):** This is the Neutron REST API. It is the highest level of abstraction, used by users and network applications. It is slow but mathematically safe.
+* **Southbound Interfaces (The Hardware Path):** This is the protocol (like OpenFlow or OVSDB) used by the controller to configure the physical hardware, such as the Open vSwitch (OVS) on bare-metal hypervisors. Users and administrators are generally not supposed to send requests directly to the Southbound interface.<label for="sn-4" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-4" class="margin-toggle"/><span class="sidenote">Bypassing the Northbound API to manually inject rules into a Southbound interface creates an immediate desync between the physical reality of the hypervisor and the logical "Target State" stored in the central database.</span>
+
+When deciding how to migrate the network, we had to choose which interface level to target.
+
+### The Three Paths of Migration
+
+Based on these access levels, VK Cloud defined three internal paths for migrating OpenStack tenants to the Sprut SDN.<label for="sn-5" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-5" class="margin-toggle"/><span class="sidenote">In OpenStack, a "Tenant" (or Project) is an isolated set of cloud resources, identical to an AWS Account or a GCP Project. Migration was executed strictly on a tenant-by-tenant basis.</span> It is important to note the "-level" postfix here: we are not migrating servers; we are migrating *networks* at different operational levels.
+
+1.  **Client-Level Migration:** A set of actions performed exclusively through the standard, existing Northbound API (e.g., recreating a virtual router, requesting a new port, reconnecting a VM interface). This approach is the most natural, predictable, and secure. However, because new entities are created via the API, the OpenStack UUIDs of those network resources will change. The guest operating systems must adapt to the switch (e.g., renewing DHCP leases), which often requires coordination with the client.
+2.  **Server-Level Migration:** A process performed entirely on the backend by operations engineers. It utilizes service-level access, direct queries to private administrative APIs, and low-level Southbound configurations. The primary goal is for the guest VMs to "notice nothing"—UUIDs remain the same, and no client involvement is required. In theory, this is the ultimate seamless migration. In practice, achieving this safely requires monumental, customized engineering effort that often exceeds the budget and timeline of a critical migration.
+3.  **Hybrid-Level Migration:** A blend of the two, utilizing Client-level API scripts for entity creation, but assisted by specific Server-level tools to bypass certain API limitations.
+
+### The Decision Matrix and Execution
+
+![alt text](/assets/img/2026-04-27-migrating-200-000-network-ports/migration_decision_matrix.png)
+
+With a massive cloud footprint and limited engineering resources, we had to prioritize ruthlessly. We developed a strict decision matrix (illustrated above) to determine which migration path a tenant would take. 
+
+**Step 1 & 2: Analysis and Blast Radius Prioritization**
+Our primary goal was to reduce the "blast radius" of a potential Neutron Full Sync disaster as quickly as possible. The fewer ports left on legacy Neutron, the faster the recovery time for everyone. Therefore, we prioritized the largest projects and our highest-paying VIP clients. 
+
+However, VIP clients rarely use simple IaaS (Infrastructure as a Service) VMs. They utilize complex PaaS environments, shared networks, VPNs, and load balancers. We had to analyze each project for these specialized services. 
+
+**Step 3: Choosing the Level of Migration**
+The presence of complex services dictated the migration branch. 
+
+For the vast majority of our VIP clients, **Client-Level Migration** was the only viable choice, offering distinct advantages:
+* **Total Feature Support:** It seamlessly handles DBaaS, PaaS, shared networks, and highly customized client solutions because it relies on native API creation.
+* **Rollback Capability:** This was the killer feature. If an obscure application-level bug appeared after moving to Sprut, we could instantly roll the VM's port back to Neutron using the same scripts.<label for="sn-6" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-6" class="margin-toggle"/><span class="sidenote">This saved us during a rare edge case where Sprut initially mishandled the dual-port connection requirements (control vs. file ports) of legacy FTP traffic. We safely rolled the affected VMs back to Neutron while our SDN developers patched Sprut.</span>
+* **Architectural Control:** The process was entirely guided by a Solution Architect working directly with the customer’s engineering team.
+
+The primary disadvantage of Client-level migration is the friction it introduces. It requires convincing a CTO to allocate their engineering resources for an infrastructure upgrade that doesn't immediately launch a new product. Additionally, changing UUIDs requires clients to update their Infrastructure-as-Code (Terraform) states. 
+
+Conversely, **Server-Level Migration** was utilized primarily by our internal L2 Support engineers for smaller, simpler tenants. 
+* **The Advantage:** It is incredibly fast, preserves all OpenStack UUIDs (saving Terraform configurations), and requires zero involvement or friction from the end-user.
+* **The Disadvantage:** It is high-risk. There is absolutely no way to roll back to Neutron if the Southbound configuration fails. It also explicitly breaks if the tenant uses PaaS or shared networks.
+
+**Execution**
+By splitting the effort, we optimized our resources. L2 engineers autonomously executed Server-level migrations for thousands of simple tenants, bypassing the API to preserve UUIDs. 
+
+Simultaneously, my team of Solution Architects managed the Client-level migrations for the VIPs. To minimize downtime, our Public API scripts pre-created all necessary Sprut subnets, security groups, load balancers, and IPsec tunnels days in advance. During the agreed maintenance window, the only action required was the physical port swap—disconnecting the Neutron port and attaching the pre-warmed Sprut port. 
+
+While clients could theoretically run these API scripts in parallel to migrate dozens of VMs in a few seconds, most preferred a sequential, one-VM-at-a-time approach, taking about 20 seconds per server to allow for immediate health checks. 
+
+Ultimately, every successful migration—regardless of the level chosen—accelerated our goal. It moved critical workloads onto a much faster, declarative SDN, while simultaneously reducing the port-count burden on the legacy Neutron database, making the cloud safer for everyone.
+
+## III. The Server-Side Migration: Hot-Swapping the Dataplane
+
+Focus: A deep-dive into how the internal SRE tool worked for the masses. (We explain this to show we understand the backend, contrasting it with your VIP solution).
+
+Logical Migration (Control Plane): Hacking the OpenStack MySQL databases to clone the network (sdn_cp_migrator).
+
+Physical Migration (Data Plane): Dropping down to the Southbound interface to manually unplug Linux bridges and plug into OVS.
+
+The Libvirt Paradox: Explaining the inconsistency between the physical wiring and the VM's XML configuration.
+
+The Fix: Using Nova Live-Migration to force the hypervisor to rewrite the XML and achieve consistency.
+
+The two types of downtime (Southbound swap vs. Live Migration).
+
+## IV. The Client-Side Migration: Surgical Tooling for VIPs
+
+Focus: Your actual project. How you built the bash/CLI tools for the biggest clients.
+
+Why Bash/CLI instead of Python (minimizing client friction and dependency hell).
+
+### The Engineering Methodology: Dependency Graphing
+The Dependency Graphing Methodology (Mapping Neutron fields to Sprut fields, figuring out the strict creation order).
 * How to build a migration tool from scratch.
 
 * API field mapping and determining the strict execution order.
 
 * Why we chose Bash + OpenStack CLI over Python to reduce client friction.
 
-## IV. Entity Caveats: IPsec, Advanced Routers, and 45-Second Windows
+### How ports swap
+
+The 45-Second Disconnect Window: How the script actually swapped the ports.
+
+The FIP and DNS workaround.
+
+
+## V. Entity Caveats: IPsec, Advanced Routers
 
 * The technical realities of the migration.
 
@@ -105,19 +191,19 @@ This migration required late-night maintenance windows, manipulating Terraform s
 
 * The 45-second VM disconnect/reconnect window.  
 
-## V. The Infrastructure-as-Code Trap: Fixing Terraform State
+## VI. The Infrastructure-as-Code Trap: Fixing Terraform State
 
 * You can't just delete and recreate a 5,000 VM deployment.
 
 * How we allowed clients to adopt the new SDN without destroying their existing Terraform state files using terraform import
 
-## VI. The Human Element: Selling Downtime to Angry CEO and CTOs
+## VII. The Human Element: Selling Downtime to Angry CEO and CTOs
 
 * The "Shoot the Messenger" dynamic.
 
 * Translating technical debt into executive business value.
 
-## VII. Translating technical debt into executive business value.
+## VIII. Translating technical debt into executive business value.
 
 * Key takeaways
 
