@@ -81,7 +81,7 @@ This migration required late-night maintenance windows, manipulating Terraform s
 
 ## II. The Philosophy of Migration: State Machines vs. Database Intervention
 
-Before writing a single script or scheduling a maintenance window, we had to determine the architectural philosophy of the migration. When moving 200,000 virtual ports, the decision of *how* to interact with the cloud—via public APIs or through direct database manipulation—dictates the entire risk profile of the project.
+Before writing a single script or scheduling a maintenance window, we had to determine the architectural philosophy of the migration. When moving 200,000 virtual ports, the decision of *how* to interact with the cloud-via public APIs or through direct database manipulation-dictates the entire risk profile of the project.
 
 ### The Cloud as a State Machine
 
@@ -120,7 +120,7 @@ When deciding how to migrate the network, we had to choose which interface level
 Based on these access levels, VK Cloud defined three internal paths for migrating OpenStack tenants to the Sprut SDN.<label for="sn-5" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-5" class="margin-toggle"/><span class="sidenote">In OpenStack, a "Tenant" (or Project) is an isolated set of cloud resources, identical to an AWS Account or a GCP Project. Migration was executed strictly on a tenant-by-tenant basis.</span> It is important to note the "-level" postfix here: we are not migrating servers; we are migrating *networks* at different operational levels.
 
 1.  **Client-Level Migration:** A set of actions performed exclusively through the standard, existing Northbound API (e.g., recreating a virtual router, requesting a new port, reconnecting a VM interface). This approach is the most natural, predictable, and secure. However, because new entities are created via the API, the OpenStack UUIDs of those network resources will change. The guest operating systems must adapt to the switch (e.g., renewing DHCP leases), which often requires coordination with the client.
-2.  **Server-Level Migration:** A process performed entirely on the backend by operations engineers. It utilizes service-level access, direct queries to private administrative APIs, and low-level Southbound configurations. The primary goal is for the guest VMs to "notice nothing"—UUIDs remain the same, and no client involvement is required. In theory, this is the ultimate seamless migration. In practice, achieving this safely requires monumental, customized engineering effort that often exceeds the budget and timeline of a critical migration.
+2.  **Server-Level Migration:** A process performed entirely on the backend by operations engineers. It utilizes service-level access, direct queries to private administrative APIs, and low-level Southbound configurations. The primary goal is for the guest VMs to "notice nothing"-UUIDs remain the same, and no client involvement is required. In theory, this is the ultimate seamless migration. In practice, achieving this safely requires monumental, customized engineering effort that often exceeds the budget and timeline of a critical migration.
 3.  **Hybrid-Level Migration:** A blend of the two, utilizing Client-level API scripts for entity creation, but assisted by specific Server-level tools to bypass certain API limitations.
 
 ### The Decision Matrix and Execution
@@ -132,32 +132,34 @@ Based on these access levels, VK Cloud defined three internal paths for migratin
   </figcaption>
 </figure>
 
+With a massive cloud footprint and limited engineering resources, we had to prioritize ruthlessly. We developed a strict decision matrix (illustrated above) to determine exactly how and when an OpenStack tenant would be migrated. 
 
-With a massive cloud footprint and limited engineering resources, we had to prioritize ruthlessly. We developed a strict decision matrix (illustrated above) to determine which migration path a tenant would take. 
+**Step 1: Analysis and Prioritization**
+We started by listing and ranking all existing OpenStack tenants. Our primary goal was to reduce the "blast radius" of a potential Neutron Full Sync disaster as quickly as possible. The fewer ports left on legacy Neutron, the faster the recovery time for everyone. Therefore, we prioritized the largest projects and our highest-paying VIP clients. 
 
-**Step 1 & 2: Analysis and Blast Radius Prioritization**
-Our primary goal was to reduce the "blast radius" of a potential Neutron Full Sync disaster as quickly as possible. The fewer ports left on legacy Neutron, the faster the recovery time for everyone. Therefore, we prioritized the largest projects and our highest-paying VIP clients. 
+**Step 2: Checking for Specialized Entities**
+We systematically analyzed each tenant for complex services. VIP clients rarely use simple IaaS (Infrastructure as a Service) VMs. They utilize complex PaaS environments, DBaaS, shared networks, VPNaaS, Floating IPs, and highly customized solutions. The presence of these entities immediately dictated the technical limitations of the migration.
 
-However, VIP clients rarely use simple IaaS (Infrastructure as a Service) VMs. They utilize complex PaaS environments, shared networks, VPNs, and load balancers. We had to analyze each project for these specialized services. 
-
-**Step 3: Choosing the Level of Migration**
-The presence of complex services dictated the migration branch. 
+**Step 3: Choosing Priority and Migration Level**
+Based on the analysis, we assigned the tenant to a priority queue (first, second, third) and selected the migration branch. The presence of complex services forced the routing between Server-Level and Client-Level migration. 
 
 For the vast majority of our VIP clients, **Client-Level Migration** was the only viable choice, offering distinct advantages:
-* **Total Feature Support:** It seamlessly handles DBaaS, PaaS, shared networks, and highly customized client solutions because it relies on native API creation.
-* **Rollback Capability:** This was the killer feature. If an obscure application-level bug appeared after moving to Sprut, we could instantly roll the VM's port back to Neutron using the same scripts.<label for="sn-6" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-6" class="margin-toggle"/><span class="sidenote">This saved us during a rare edge case where Sprut initially mishandled the dual-port connection requirements (control vs. file ports) of legacy FTP traffic. We safely rolled the affected VMs back to Neutron while our SDN developers patched Sprut.</span>
+* **Total Feature Support:** It seamlessly handles DBaaS, PaaS, shared networks, and custom solutions because it relies on native API creation.
 * **Architectural Control:** The process was entirely guided by a Solution Architect working directly with the customer’s engineering team.
+* **The Disadvantage:** It introduces friction. It requires convincing a CTO to allocate their engineering resources for an infrastructure upgrade. Additionally, changing UUIDs requires clients to update their Infrastructure-as-Code (Terraform) states.
 
-The primary disadvantage of Client-level migration is the friction it introduces. It requires convincing a CTO to allocate their engineering resources for an infrastructure upgrade that doesn't immediately launch a new product. Additionally, changing UUIDs requires clients to update their Infrastructure-as-Code (Terraform) states.
+Conversely, **Server-Level Migration** was utilized primarily for smaller, simpler tenants. 
+* **The Advantage:** It is incredibly fast, preserves all OpenStack UUIDs (saving Terraform configurations), and requires zero involvement from the end-user.
+* **The Disadvantage:** It explicitly breaks if the tenant uses PaaS or shared networks, making it unsuitable for complex enterprise environments.
 
-Conversely, **Server-Level Migration** was utilized primarily by our internal L2 Support engineers for smaller, simpler tenants. 
-* **The Advantage:** It is incredibly fast, preserves all OpenStack UUIDs (saving Terraform configurations), and requires zero involvement or friction from the end-user.
-* **The Disadvantage:** It is high-risk. There is absolutely no way to roll back to Neutron if the Southbound configuration fails. It also explicitly breaks if the tenant uses PaaS or shared networks.
+**Step 4: Migration Preparation**
+Preparation diverged entirely depending on the chosen path.
+* **Server-Level Preparation:** We allocated an internal L2/L3 support engineer, scheduled a downtime window, and notified the Solution Architect if the tenant belonged to a VIP client.
+* **Client-Level Preparation:** Preparation was highly collaborative. The customer’s InfoSec team audited our open-source migration scripts. We then trained the customer's engineers on how to execute the tools, allocated a Solution Architect to oversee the process, and agreed on a strict downtime window. To minimize that window, our scripts pre-created all necessary Sprut subnets, security groups, load balancers, and IPsec tunnels days in advance without impacting the live environment.
 
-**Execution**
-By splitting the effort, we optimized our resources. L2 engineers autonomously executed Server-level migrations for thousands of simple tenants, bypassing the API to preserve UUIDs. 
-
-Simultaneously, my team of Solution Architects managed the Client-level migrations for the VIPs. To minimize downtime, our Public API scripts pre-created all necessary Sprut subnets, security groups, load balancers, and IPsec tunnels days in advance. During the agreed maintenance window, the only action required was the physical port swap—disconnecting the Neutron port and attaching the pre-warmed Sprut port. 
+**Step 5: Migration Execution and Troubleshooting**
+* **Server-Level Execution:** L2/L3 engineers autonomously executed the migration using backend utilities, bypassing the Northbound API to preserve OpenStack UUIDs. If problems arose, they followed strict internal runbooks. Because this method manipulates the database directly, rolling back to Neutron in the event of a failure was strictly impossible.
+* **Client-Level Execution:** The customer's engineer executed the migration steps. During the maintenance window, the only action required was the physical port swap—disconnecting the Neutron port and attaching the pre-created Sprut port. This method's greatest strength was its rollback capability. If an obscure application-level bug appeared after moving to Sprut, we could instantly roll the VM's port back to Neutron using the same scripts.<label for="sn-6" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-6" class="margin-toggle"/><span class="sidenote">This saved us during a rare edge case where Sprut initially mishandled the dual-port connection requirements (control vs. file ports) of legacy FTP traffic. We safely rolled the affected VMs back to Neutron while our SDN developers patched Sprut.</span>
 
 While clients could theoretically run these API scripts in parallel to migrate dozens of VMs in a few seconds, most preferred a sequential, one-VM-at-a-time approach, taking about 20 seconds per server to allow for immediate health checks. Interestingly, as the script repository matured with comprehensive documentation, a shift occurred. Large enterprise clients managing dozens of OpenStack tenants—such as Philip Morris International—became increasingly independent. Once they grew comfortable with the methodology, they began executing migrations entirely on their own, and in some cases, built specialized internal tools based on our scripts. Eventually, simply handing over the repository link was enough for many to self-serve, though our Solution Architects always remained on standby to assist if needed.
 
