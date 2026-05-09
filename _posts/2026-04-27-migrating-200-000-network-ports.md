@@ -85,17 +85,28 @@ Before writing a single script or scheduling a maintenance window, we had to det
 
 ### The Cloud as a State Machine
 
-![alt text](/assets/img/2026-04-27-migrating-200-000-network-ports/cloud_state_machine.png)
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/cloud_state_machine.png" alt="Cloud state machine" />
+  <figcaption>
+    <strong>Fig. 1.</strong> The cloud as a State Machine which synchronizes Cloud State and physical infrastructure.
+  </figcaption>
+</figure>
 
 At its core, a cloud environment can be viewed as a massive state machine. As shown in the simplified model above, external users interact with a Public API to declare their desired infrastructure state (e.g., "Create a network with this CIDR block"). The Cloud Control Plane accepts these requests, writes the "Target State" to the central database, and continuously works to synchronize the physical hardware with that database.
 
-The safest way to change the state of physical infrastructure is strictly through the Public API. When a request comes through the front door, the Control Plane executes a gauntlet of safety checks: it verifies quotas, checks for physical resource availability, validates parameter formatting, and prevents security exploits. This rigorous validation is what guarantees the reliability of the cloud and ensures the database remains uncorrupted. 
+The safest way to change the state of physical infrastructure is strictly through the Public API. When a request comes through, the Control Plane executes a list of safety checks: it verifies quotas, checks for physical resource availability, validates parameter formatting, and prevents security exploits. This rigorous validation is what guarantees the reliability of the cloud and ensures the database remains uncorrupted. 
 
 However, safety comes at a cost. At hyperscale, executing millions of API calls and waiting for validation checks takes significant time. To speed up operations, engineers are often tempted to bypass the Public API and interact directly with the physical infrastructure or private, unrestricted administrative APIs. While faster, this direct intervention removes the safety net, significantly increasing the risk of state corruption.
 
 ### Mapping Migration to the SDN Layers
 
-![alt text](/assets/img/2026-04-27-migrating-200-000-network-ports/sdn_layers.png)
+
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/sdn_layers.png" alt="SDN Layered Diagram" />
+  <figcaption>
+    <strong>Fig. 2.</strong> Software-Defined Networks in planes and layers.
+  </figcaption>
+</figure>
 
 This state machine philosophy maps directly onto the architecture of a Software-Defined Network. As established in the previous article, SDN separates the Control Plane from the Data Plane. Crucially, it introduces different levels of access:
 
@@ -114,7 +125,13 @@ Based on these access levels, VK Cloud defined three internal paths for migratin
 
 ### The Decision Matrix and Execution
 
-![alt text](/assets/img/2026-04-27-migrating-200-000-network-ports/migration_decision_matrix.png)
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/migration_decision_matrix.png" alt="SDN Layered Diagram" />
+  <figcaption>
+    <strong>Fig. 3.</strong> SDN Migration decision matrix.
+  </figcaption>
+</figure>
+
 
 With a massive cloud footprint and limited engineering resources, we had to prioritize ruthlessly. We developed a strict decision matrix (illustrated above) to determine which migration path a tenant would take. 
 
@@ -131,7 +148,7 @@ For the vast majority of our VIP clients, **Client-Level Migration** was the onl
 * **Rollback Capability:** This was the killer feature. If an obscure application-level bug appeared after moving to Sprut, we could instantly roll the VM's port back to Neutron using the same scripts.<label for="sn-6" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-6" class="margin-toggle"/><span class="sidenote">This saved us during a rare edge case where Sprut initially mishandled the dual-port connection requirements (control vs. file ports) of legacy FTP traffic. We safely rolled the affected VMs back to Neutron while our SDN developers patched Sprut.</span>
 * **Architectural Control:** The process was entirely guided by a Solution Architect working directly with the customer’s engineering team.
 
-The primary disadvantage of Client-level migration is the friction it introduces. It requires convincing a CTO to allocate their engineering resources for an infrastructure upgrade that doesn't immediately launch a new product. Additionally, changing UUIDs requires clients to update their Infrastructure-as-Code (Terraform) states. 
+The primary disadvantage of Client-level migration is the friction it introduces. It requires convincing a CTO to allocate their engineering resources for an infrastructure upgrade that doesn't immediately launch a new product. Additionally, changing UUIDs requires clients to update their Infrastructure-as-Code (Terraform) states.
 
 Conversely, **Server-Level Migration** was utilized primarily by our internal L2 Support engineers for smaller, simpler tenants. 
 * **The Advantage:** It is incredibly fast, preserves all OpenStack UUIDs (saving Terraform configurations), and requires zero involvement or friction from the end-user.
@@ -142,7 +159,7 @@ By splitting the effort, we optimized our resources. L2 engineers autonomously e
 
 Simultaneously, my team of Solution Architects managed the Client-level migrations for the VIPs. To minimize downtime, our Public API scripts pre-created all necessary Sprut subnets, security groups, load balancers, and IPsec tunnels days in advance. During the agreed maintenance window, the only action required was the physical port swap—disconnecting the Neutron port and attaching the pre-warmed Sprut port. 
 
-While clients could theoretically run these API scripts in parallel to migrate dozens of VMs in a few seconds, most preferred a sequential, one-VM-at-a-time approach, taking about 20 seconds per server to allow for immediate health checks. 
+While clients could theoretically run these API scripts in parallel to migrate dozens of VMs in a few seconds, most preferred a sequential, one-VM-at-a-time approach, taking about 20 seconds per server to allow for immediate health checks. Interestingly, as the script repository matured with comprehensive documentation, a shift occurred. Large enterprise clients managing dozens of OpenStack tenants—such as Philip Morris International—became increasingly independent. Once they grew comfortable with the methodology, they began executing migrations entirely on their own, and in some cases, built specialized internal tools based on our scripts. Eventually, simply handing over the repository link was enough for many to self-serve, though our Solution Architects always remained on standby to assist if needed.
 
 Ultimately, every successful migration—regardless of the level chosen—accelerated our goal. It moved critical workloads onto a much faster, declarative SDN, while simultaneously reducing the port-count burden on the legacy Neutron database, making the cloud safer for everyone.
 
