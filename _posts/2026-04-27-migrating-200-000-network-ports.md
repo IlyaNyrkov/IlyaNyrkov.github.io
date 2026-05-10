@@ -187,7 +187,7 @@ While clients could theoretically run these API scripts in parallel to migrate d
 
 Ultimately, every successful migration-regardless of the level chosen-accelerated our goal. It moved critical workloads onto a much faster, declarative SDN, while simultaneously reducing the port-count burden on the legacy Neutron database, making the cloud safer for everyone.
 
-## III. The Server-Side Migration: Hot-Swapping the Dataplane
+## III. The Server-Level Migration: Hot-Swapping the Dataplane
 
 Focus: A deep-dive into how the internal SRE tool worked for the masses. (We explain this to show we understand the backend, contrasting it with your VIP solution).
 
@@ -201,7 +201,7 @@ The Fix: Using Nova Live-Migration to force the hypervisor to rewrite the XML an
 
 The two types of downtime (Southbound swap vs. Live Migration).
 
-## IV. The Client-Side Migration: Surgical Tooling for VIPs
+## IV. The Client-Level Migration: Safe Tooling for VIPs
 
 Focus: Your actual project. How you built the bash/CLI tools for the biggest clients.
 
