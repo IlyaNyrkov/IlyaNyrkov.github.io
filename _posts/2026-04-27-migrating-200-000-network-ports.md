@@ -126,7 +126,7 @@ Regardless of whether you use the Northbound API or Southbound database hacks, t
 <figure class="center-caption">
   <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/basic_port_migration.png" alt="Basic port migration" />
   <figcaption>
-    <strong>Fig. 4.</strong> Basic port cloud networking port migration.
+    <strong>Fig. 3.</strong> Basic cloud networking port migration.
   </figcaption>
 </figure>
 
@@ -150,7 +150,7 @@ Based on the access levels described earlier, We defined three internal paths fo
 <figure class="center-caption">
   <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/migration_decision_matrix.png" alt="SDN Layered Diagram" />
   <figcaption>
-    <strong>Fig. 3.</strong> SDN Migration decision matrix.
+    <strong>Fig. 4.</strong> SDN Migration decision matrix.
   </figcaption>
 </figure>
 
@@ -191,14 +191,14 @@ Ultimately, every successful migration-regardless of the level chosen-accelerate
 
 While the Client-level migration utilizing the Northbound API was the safest route for our VIPs, it required active coordination and client engineering effort. For the thousands of smaller tenants remaining in the cloud, we needed a completely invisible backend solution. This is the Server-level migration. 
 
-The core concept of a Server-level migration is based on cloning the client's network infrastructure from the source SDN (Neutron) to the destination SDN (Sprut) in a 1-to-1 ratio. We temporarily create duplicates while preserving the original values of all significant parameters, most importantly the OpenStack UUIDs. By bypassing the standard public APIs, we ensure the guest virtual machines—and the clients managing them—notice absolutely nothing other than a brief network disconnect.
+The core concept of a Server-level migration is based on cloning the client's network infrastructure from the source SDN (Neutron) to the destination SDN (Sprut) in a 1-to-1 ratio. We temporarily create duplicates while preserving the original values of all significant parameters, most importantly the OpenStack UUIDs. By bypassing the standard public APIs, we ensure the guest virtual machines-and the clients managing them-notice absolutely nothing other than a brief network disconnect.
 
 ### Mapping Migration to the Two Jobs of SDN
 
 <figure class="center-caption">
   <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/server-level-access-to-control-and-data-planes.png" alt="Server-level Migration Access Map" />
   <figcaption>
-    <strong>Fig. 4.</strong> Server-level migration access across the Control and Data planes.
+    <strong>Fig. 5.</strong> Server-level migration access across the Control and Data planes.
   </figcaption>
 </figure>
 
@@ -214,11 +214,11 @@ As shown in Figure 4, executing this requires Admin-level access and direct data
 <figure class="center-caption">
   <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/server-level-access-to-control-plane.png" alt="Logical Migration Access" />
   <figcaption>
-    <strong>Fig. 5.</strong> Logical migration directly accesses private APIs and SQL databases.
+    <strong>Fig. 6.</strong> Logical migration directly accesses private APIs and SQL databases.
   </figcaption>
 </figure>
 
-The logical migration phase focuses entirely on the cloud databases. Because an SDN encompasses much more than just VM ports—managing routers, firewall rules, and metadata—the backend script (`sdn_cp_migrator`) must perfectly clone these relationships. The process consists of three main tasks:
+The logical migration phase focuses entirely on the cloud databases. Because an SDN encompasses much more than just VM ports-managing routers, firewall rules, and metadata-the backend script (`sdn_cp_migrator`) must perfectly clone these relationships. The process consists of three main tasks:
 
 **1. Analysis of Resources:** The utility scans the source SDN to determine if migration is possible. Because Server-level migration is an irreversible process, we cannot perform partial migrations (e.g., migrating only half of a subnet). Once a tenant is migrated, legacy Neutron support for that tenant is permanently blocked. Due to this irreversibility, L2 support engineers often create a mock copy of the client's topology to perform a "dry run" rehearsal before touching production.
 
@@ -233,7 +233,7 @@ Once the transfer is verified, the logical entities in the Neutron database are 
 <figure class="center-caption">
   <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/neutron_sprut_physical_path.png" alt="Dataplane Comparison" />
   <figcaption>
-    <strong>Fig. 6.</strong> The physical network paths of a VM in Neutron vs. Sprut.
+    <strong>Fig. 7.</strong> The physical network paths of a VM in Neutron vs. Sprut.
   </figcaption>
 </figure>
 
@@ -253,7 +253,7 @@ The physical migration (`sdn_dp_migrator`) executes the swap in three stages.
 <figure class="center-caption">
   <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/physical_migration_preparation.png" alt="Migration Preparation" />
   <figcaption>
-    <strong>Fig. 7.</strong> The pre-created Sprut target state awaits connection.
+    <strong>Fig. 8.</strong> The pre-created Sprut target state awaits connection.
   </figcaption>
 </figure>
 Thanks to the logical migration phase, the target Sprut OVS bridge and network topology already exist on the hypervisor. The VM is currently operating on the original Neutron path.
@@ -262,7 +262,7 @@ Thanks to the logical migration phase, the target Sprut OVS bridge and network t
 <figure class="center-caption">
   <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/physical_migration_port_swap.png" alt="The Port Swap" />
   <figcaption>
-    <strong>Fig. 8.</strong> Disconnecting the tap interface and binding it to Sprut.
+    <strong>Fig. 9.</strong> Disconnecting the tap interface and binding it to Sprut.
   </figcaption>
 </figure>
 The script executes a sequence of strict Southbound commands:
@@ -275,7 +275,7 @@ The script executes a sequence of strict Southbound commands:
 <figure class="center-caption">
   <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/physical_migration_dataplane_cleanup.png" alt="Neutron Dataplane Cleanup" />
   <figcaption>
-    <strong>Fig. 9.</strong> Disassembling the legacy Neutron virtual interface.
+    <strong>Fig. 10.</strong> Disassembling the legacy Neutron virtual interface.
   </figcaption>
 </figure>
 With the VM successfully passing traffic over Sprut, the script cleans up the host hypervisor. It detaches the `veth` pairs (3.1, 3.4), disables and deletes the Linux bridge (3.2, 3.3), and completely removes the virtual cables (3.5).
@@ -287,8 +287,6 @@ If we stop after Stage 3, the packets flow perfectly, but we have created a tick
 While we successfully hot-swapped the network on the hypervisor, the VM's persistent `libvirt` XML configuration file (which defines the VM's hardware for QEMU) still believes the VM is connected to the old Neutron Linux bridge. The server is now in an inconsistent state: the logical database says Sprut, the physical dataplane says Sprut, but the hypervisor's local definition says Neutron. If the VM were to be hard-rebooted, it would attempt to connect to a Linux bridge that no longer exists, resulting in a fatal crash.
 
 We cannot simply edit the `libvirt` XML file manually without risking severe hypervisor corruption. The only safe way to resolve this inconsistency is to perform a **Live Migration**. By instructing Nova to live-migrate the VM to a different bare-metal host, Nova is forced to read the *new* database state and generate a fresh, accurate `libvirt` XML file on the destination host, fully finalizing the transition.
-
-
 
 ### Downtime Expectations
 
@@ -316,23 +314,127 @@ To successfully safely manage this across thousands of tenants, the complete Ser
 
 ## IV. The Client-Level Migration: Safe Tooling for VIPs
 
-Focus: Your actual project. How you built the bash/CLI tools for the biggest clients.
+While the internal backend tools were efficient for smaller workloads, the sheer complexity of our VIP clients' environments demanded a different approach. We needed surgical tools that respected the OpenStack state machine, utilized the public APIs, and could be audited and executed directly by the client's engineering teams. 
 
-Why Bash/CLI instead of Python (minimizing client friction and dependency hell).
+All the tools, scripts, and Terraform test stands developed for this project are available in the public [VK Cloud neutron-2-sprut repository](https://github.com/vk-cs/neutron-2-sprut/tree/main). 
 
-### The Engineering Methodology: Dependency Graphing
-The Dependency Graphing Methodology (Mapping Neutron fields to Sprut fields, figuring out the strict creation order).
-* How to build a migration tool from scratch.
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/client-level-migration-arch.png" alt="Client-level Migration API Access" />
+  <figcaption>
+    <strong>Fig. 11.</strong> Client-level migration interacts strictly with the Northbound REST API, preserving validation and state checks.
+  </figcaption>
+</figure>
 
-* API field mapping and determining the strict execution order.
+### The Tooling Choice: Why Bash and CLI?
 
-* Why we chose Bash + OpenStack CLI over Python to reduce client friction.
+The first architectural decision was choosing the right language for the migration tools. OpenStack is written in Python, and its Python SDKs (`openstacksdk`) are powerful and expressive. A standard engineering instinct would be to write the migration utility as a comprehensive Python application. We explicitly chose not to do this.
 
-### How ports swap
+Instead, I developed the entire toolset using Bash, standard OpenStack CLI commands, `curl`, and `jq` (for JSON processing). 
 
-The 45-Second Disconnect Window: How the script actually swapped the ports.
+This decision was driven by client friction. This tool was designed to be run by the client's DevOps engineers under the scrutiny of their InfoSec teams. Almost all engineers operating within an OpenStack cloud are already intimately familiar with standard OpenStack CLI commands. Providing a Python application meant forcing the client to review thousands of lines of unfamiliar code, manage virtual environments, resolve Python version discrepancies, and handle dependency conflicts on their jump hosts.<label for="sn-9" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-9" class="margin-toggle"/><span class="sidenote">In enterprise environments, introducing new Python dependencies to a hardened jump host often requires InfoSec approval, which can delay a critical maintenance window by weeks. Bash and Curl are universally available.</span>
 
-The FIP and DNS workaround.
+Bash scripts utilizing standard CLI commands are transparent. A client engineer can read the script, instantly understand the API calls being made, and trust the execution. There was one caveat: because the OpenStack CLI was not originally designed to manage overlapping SDNs natively, some resources (like creating a base Network) defaulted to Neutron. To bypass this, we used `curl` to make direct REST API calls for specific Sprut entity creation, while relying on the CLI for everything else.
+
+### The Core Mechanics: Migrating the VM Port
+
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/sequence_of_swapping_ports.png alt="Port Migration Logic" />
+  <figcaption>
+    <strong>Fig. 12.</strong> The sequence of swapping a virtual interface.
+  </figcaption>
+</figure>
+
+The foundation of the migration is the virtual machine port swap. One of the greatest advantages of OpenStack is the ability to create a networking port with a specifically requested MAC and IP address. This capability is the linchpin of our strategy, as it allows us to swap the underlying network without forcing the guest OS to reconfigure its internal network interfaces (e.g., `netplan` or `systemd-networkd`). The only action required by the guest OS post-migration is a simple DHCP renewal (`dhclient`).
+
+We iterated through several versions of this core script. The initial proof-of-concept, [`migrator.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/migrator.sh), was highly interactive, prompting the user for the VM name and destination subnets. While it proved the methodology was safe, interactivity is an anti-pattern for mass automation.
+
+The production version, [`migrator-multiple.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/migrator-multiple.sh), accepts a CSV configuration file and processes VMs sequentially. Crucially, it includes idempotency checks. If a migration fails mid-execution, the pre-created ports are not deleted; the script can simply be re-run, detect the existing resources, and pick up where it left off.
+
+Here is the core logic sequence executed by the script:
+
+```bash
+# 1. Capture original MAC and IP
+capture_info_full 
+
+# 2. Create the new port on Sprut with the exact same MAC/IP
+create_port_with_mac_ip 
+
+# 3. Disconnect the old port from the Nova instance
+detach_source_port 
+
+# 4. Attach the newly created Sprut port
+attach_new_port 
+
+# 5. Apply original Security Groups and Floating IPs to the new port
+set_security_groups
+attach_floating_ip
+```
+
+While most IaaS VMs only have a single port, specialized instances (like Next-Generation Firewalls or virtual routers) often possess multiple interfaces. For these complex, multi-port edge cases, we recommended that clients execute the migration manually via the CLI to ensure proper interface ordering and routing preservation.
+
+### Dependency Graphing: Migrating Complex Services
+
+Migrating flat networks and basic VMs is trivial. The true complexity of a client-level migration emerges when dealing with specialized services like VPNaaS (IPsec) and LBaaS (Load Balancers). You cannot simply "copy" an IPsec tunnel.
+
+To automate the migration of a complex service, you must execute strict **Dependency Graphing**.
+
+When you query the API for an `IPSEC SITE CONNECTION`, the response doesn't just contain flat strings (like the Pre-Shared Key). It contains IDs referencing other discrete OpenStack entities (e.g., `ikepolicy_id`, `ipsecpolicy_id`, `local_ep_group_id`). Those child entities must be queried, and they often contain their own dependencies.
+
+If you attempt to create the top-level IPsec tunnel on the destination SDN before creating its child policies, the API will reject the request. Therefore, the migration algorithm must collect data top-down, but execute creation bottom-up.
+
+This dependency logic forms a universal 4-stage architecture used in almost all of our service migration scripts, as demonstrated in [`copy-ipsec-v2.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/copy-ipsec-v2.sh):
+
+1. **Stage 1: Collection.** Query the source Neutron entities and all hierarchical children.
+2. **Stage 2: Target Discovery.** Query the Sprut environment to see if any of these entities have already been created (preventing duplicates).
+3. **Stage 3: Delta Creation.** Create the missing child objects (IKE policies, Endpoint groups) in Sprut.
+4. **Stage 4: Final Assembly.** Create the top-level IPsec connection binding the new child objects together.
+
+```bash
+# Example from copy-ipsec-v2.sh: Stage 4 Assembly via REST
+curl_response=$(curl -s -X POST "${sprut_api_base}/vpn/ipsec-site-connections" \
+    -H "Content-Type: application/json" \
+    -H "X-SDN:SPRUT" \
+    -d '{
+          "ipsec_site_connection": {
+              "psk": "'$psk'",
+              "ikepolicy_id": "'$ikepolicy_id'",
+              "ipsecpolicy_id": "'$ipsecpolicy_id'",
+              "peer_address": "'$peer_address'",
+              "name": "'$name'"
+          }
+        }')
+
+```
+
+Arguably the most complex entity to map was the Load Balancer (LBaaS). OpenStack Octavia load balancers are provisioned as active/standby "Amphora" VMs. Because spinning up these VMs takes time, we split the logic into two scripts. First, [`copy-loadbalancer.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/copy-loadbalancer.sh) pre-provisions the heavy Amphora instances on Sprut days before the maintenance window. Later, [`copy-loadbalancer-rules.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/copy-loadbalancer-rules.sh) is executed during the downtime to instantly attach the migrated backend VMs to the new Sprut load balancer pools.
+
+### Platform Services (PaaS) and BGP Routing
+
+Migrating PaaS instances (like Managed Kubernetes or DBaaS) presents a unique challenge. Because PaaS orchestration engines (like Magnum or Trove) maintain their own state databases that synchronize with Nova and Neutron, manually swapping the underlying network ports via scripts immediately corrupts the PaaS controller's state.
+
+To migrate PaaS safely, the client must use the native PaaS backup/restore tools (e.g., Velero for Kubernetes) to spin up a completely new instance directly on the Sprut network.
+
+This introduces a routing dilemma. If half of a client's project (the VMs) is migrated to Sprut, and the other half (the PaaS cluster) remains on Neutron, how do they communicate? VK Cloud’s "Advanced Router" utilizes BGP peering to seamlessly bridge Sprut and Neutron subnets, allowing partial project migrations.A router cannot bridge two networks possessing the exact same IP address space. To utilize cross-SDN routing during a partial migration, the target Sprut network must be provisioned with a different CIDR block than the original Neutron network.
+
+### The IaC Trap: Fixing Terraform State
+
+The final hurdle of the Client-level migration was Infrastructure-as-Code (IaC).
+
+For massive clients like Uchi.ru, deleting and recreating thousands of resources via Terraform was operationally impossible. While our scripts successfully migrated the physical network, Terraform was completely unaware of the changes. If a client ran `terraform apply` after our scripts finished, Terraform would detect that the VM was no longer attached to the Neutron port defined in its code, and it would violently attempt to recreate the VM to "fix" the discrepancy.
+
+Terraform, like the cloud itself, is a state machine. To prevent catastrophic recreations, we had to manually manipulate the `.tfstate` file to force it to recognize the new Sprut UUIDs.
+
+To automate this surgery, I wrote [`modify_terraform_state.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/modify_terraform_state.sh). The client updates their `.tf` files to declare `sdn = "sprut"` on their network resources. The script then executes a sequence of `terraform state rm` (to untrack the old Neutron ports) and `terraform import` commands to pull the newly generated Sprut UUIDs directly into the local state file.
+
+```bash
+# Removing the legacy tracking
+terraform state rm vkcs_networking_port.port_1
+
+# Importing the new Sprut UUID into the state file
+terraform import vkcs_networking_port.port_1 <NEW_SPRUT_PORT_UUID>
+```
+
+By surgically updating the state file, the client regains total declarative control over their newly migrated Sprut infrastructure, completing the migration cycle with zero loss of automation.
 
 
 ## V. Entity Caveats: IPsec, Advanced Routers
