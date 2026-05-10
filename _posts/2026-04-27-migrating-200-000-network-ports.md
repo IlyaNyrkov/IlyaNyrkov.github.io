@@ -189,17 +189,130 @@ Ultimately, every successful migration-regardless of the level chosen-accelerate
 
 ## III. The Server-Level Migration: Hot-Swapping the Dataplane
 
-Focus: A deep-dive into how the internal SRE tool worked for the masses. (We explain this to show we understand the backend, contrasting it with your VIP solution).
+While the Client-level migration utilizing the Northbound API was the safest route for our VIPs, it required active coordination and client engineering effort. For the thousands of smaller tenants remaining in the cloud, we needed a completely invisible backend solution. This is the Server-level migration. 
 
-Logical Migration (Control Plane): Hacking the OpenStack MySQL databases to clone the network (sdn_cp_migrator).
+The core concept of a Server-level migration is based on cloning the client's network infrastructure from the source SDN (Neutron) to the destination SDN (Sprut) in a 1-to-1 ratio. We temporarily create duplicates while preserving the original values of all significant parameters, most importantly the OpenStack UUIDs. By bypassing the standard public APIs, we ensure the guest virtual machines—and the clients managing them—notice absolutely nothing other than a brief network disconnect.
 
-Physical Migration (Data Plane): Dropping down to the Southbound interface to manually unplug Linux bridges and plug into OVS.
+### Mapping Migration to the Two Jobs of SDN
 
-The Libvirt Paradox: Explaining the inconsistency between the physical wiring and the VM's XML configuration.
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/server-level-access-to-control-and-data-planes.png" alt="Server-level Migration Access Map" />
+  <figcaption>
+    <strong>Fig. 4.</strong> Server-level migration access across the Control and Data planes.
+  </figcaption>
+</figure>
 
-The Fix: Using Nova Live-Migration to force the hypervisor to rewrite the XML and achieve consistency.
+In the previous article, we established that a modern cloud SDN performs two primary jobs: Entity Management (Control Plane) and Network Function Virtualization (Data Plane). The Server-level migration is cleanly split into two corresponding phases:
 
-The two types of downtime (Southbound swap vs. Live Migration).
+1. **Logical Migration:** This handles the Entity Management. It involves cloning the cloud entities (Networks, Subnets, Ports, Security Groups) directly in the databases.
+2. **Physical Migration:** This handles the Data Plane. It involves mechanically rewiring the virtual machine's network interface on the bare-metal hypervisor.
+
+As shown in Figure 4, executing this requires Admin-level access and direct database manipulation (e.g., via SQL CLI), completely bypassing the standard Northbound API. One of the major advantages of this approach is speed; by interacting directly with the databases and network nodes, we bypass the slow RabbitMQ RPC queues that bottleneck legacy Neutron.<label for="sn-7" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-7" class="margin-toggle"/><span class="sidenote">Avoiding the RPC queue provides a massive speedup, but it is inherently dangerous. Manual database manipulation risks breaking the control loop, corrupting the synchronized state, or leaving the hypervisor with invalid local configurations.</span>
+
+### The Logical Migration
+
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/server-level-access-to-control-plane.png" alt="Logical Migration Access" />
+  <figcaption>
+    <strong>Fig. 5.</strong> Logical migration directly accesses private APIs and SQL databases.
+  </figcaption>
+</figure>
+
+The logical migration phase focuses entirely on the cloud databases. Because an SDN encompasses much more than just VM ports—managing routers, firewall rules, and metadata—the backend script (`sdn_cp_migrator`) must perfectly clone these relationships. The process consists of three main tasks:
+
+**1. Analysis of Resources:** The utility scans the source SDN to determine if migration is possible. Because Server-level migration is an irreversible process, we cannot perform partial migrations (e.g., migrating only half of a subnet). Once a tenant is migrated, legacy Neutron support for that tenant is permanently blocked. Due to this irreversibility, L2 support engineers often create a mock copy of the client's topology to perform a "dry run" rehearsal before touching production.
+
+**2. Preparation and Transfer:**
+The script injects the cloned state into the Sprut database. A critical challenge during this phase was the migration of Floating IPs (Public IPs). You cannot simply move a public IP from a Neutron edge router to a Sprut edge router without causing severe BGP routing downtime. Previously, we relied on DNS round-robin hacks, but for this migration, we developed a specialized internal REST API handle that allowed administrators to seamlessly transfer the Floating IP bindings between the two SDNs at the backend level.
+
+**3. Deletion in the Source SDN:**
+Once the transfer is verified, the logical entities in the Neutron database are purged to prevent the control plane from managing duplicate states.
+
+### The Physical Migration: The QEMU/KVM Dataplane
+
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/neutron_sprut_physical_path.png" alt="Dataplane Comparison" />
+  <figcaption>
+    <strong>Fig. 6.</strong> The physical network paths of a VM in Neutron vs. Sprut.
+  </figcaption>
+</figure>
+
+With the databases cloned, we must perform the physical migration. This involves dropping down to the Southbound interface (the Linux shell of the hypervisor) to manually hot-swap the network cables. To understand how we do this without shutting down the VM, we must look at how a virtual machine connects to the network in a QEMU/KVM environment.
+
+When an application inside a VM sends data, the guest OS encapsulates it into an Ethernet frame and pushes it to its virtual driver. QEMU intercepts this write operation in the guest's memory space and injects it into a `tap` interface on the host machine. 
+
+From the `tap` interface, the paths diverge depending on the SDN (as seen in Figure 6):
+* **Neutron's Path:** The frame enters a small Linux bridge (`qbr`). Here, the host kernel applies `iptables` rules to enforce OpenStack Security Groups. It then traverses a virtual patch cable (`veth` pair) into the Open vSwitch integration bridge (`br-int`), where it is tagged and sent to the tunnel bridge.
+* **Sprut's Path:** The architecture is significantly simpler. Sprut drops the intermediate Linux bridge entirely. The `tap` interface plugs directly into the Sprut OVS bridge (`br-sprut`).<label for="sn-8" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-8" class="margin-toggle"/><span class="sidenote">Neutron required the intermediate Linux bridge because older versions of OVS did not natively support stateful firewalls. Sprut utilizes modern OVS connection tracking (conntrack), allowing security groups to be enforced directly within the OpenFlow tables.</span>
+
+### Step-by-Step: Hot-Swapping the Port
+
+The physical migration (`sdn_dp_migrator`) executes the swap in three stages.
+
+**Stage 1: Preparation**
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/physical_migration_preparation.png" alt="Migration Preparation" />
+  <figcaption>
+    <strong>Fig. 7.</strong> The pre-created Sprut target state awaits connection.
+  </figcaption>
+</figure>
+Thanks to the logical migration phase, the target Sprut OVS bridge and network topology already exist on the hypervisor. The VM is currently operating on the original Neutron path.
+
+**Stage 2: The Switch**
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/physical_migration_port_swap.png" alt="The Port Swap" />
+  <figcaption>
+    <strong>Fig. 8.</strong> Disconnecting the tap interface and binding it to Sprut.
+  </figcaption>
+</figure>
+The script executes a sequence of strict Southbound commands:
+* **2.1:** It forcefully unplugs the VM's `tap` interface from the legacy Linux bridge. (Network connectivity drops here).
+* **2.2:** It instantly plugs the `tap` interface into `br-sprut`.
+* **2.3:** It calls the Sprut API to officially bind the port to the VM in the control plane.
+* **2.4:** It calls the Neutron API to unbind the old port. (Network connectivity is restored).
+
+**Stage 3: The Cleanup**
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/physical_migration_dataplane_cleanup.png" alt="Neutron Dataplane Cleanup" />
+  <figcaption>
+    <strong>Fig. 9.</strong> Disassembling the legacy Neutron virtual interface.
+  </figcaption>
+</figure>
+With the VM successfully passing traffic over Sprut, the script cleans up the host hypervisor. It detaches the `veth` pairs (3.1, 3.4), disables and deletes the Linux bridge (3.2, 3.3), and completely removes the virtual cables (3.5).
+
+### The Inconsistent State (The Libvirt Paradox)
+
+If we stop after Stage 3, the packets flow perfectly, but we have created a ticking time bomb. 
+
+While we successfully hot-swapped the network on the hypervisor, the VM's persistent `libvirt` XML configuration file (which defines the VM's hardware for QEMU) still believes the VM is connected to the old Neutron Linux bridge. The server is now in an inconsistent state: the logical database says Sprut, the physical dataplane says Sprut, but the hypervisor's local definition says Neutron. If the VM were to be hard-rebooted, it would attempt to connect to a Linux bridge that no longer exists, resulting in a fatal crash.
+
+We cannot simply edit the `libvirt` XML file manually without risking severe hypervisor corruption. The only safe way to resolve this inconsistency is to perform a **Live Migration**. By instructing Nova to live-migrate the VM to a different bare-metal host, Nova is forced to read the *new* database state and generate a fresh, accurate `libvirt` XML file on the destination host, fully finalizing the transition.
+
+
+
+### Downtime Expectations
+
+Despite operating on the backend, Server-level migration still incurs downtime, split into two distinct windows:
+1. **Downtime 1 (The Dataplane Swap):** The time between unplugging the `tap` interface from Neutron and the Sprut OpenFlow rules fully propagating. This typically lasts 10 to 30 seconds.
+2. **Downtime 2 (The Live Migration):** The standard memory cutover time required by QEMU when moving the VM between physical hosts to fix the `libvirt` XML.
+
+### The Server-Level Migration Algorithm
+
+To successfully safely manage this across thousands of tenants, the complete Server-level migration utility follows this strict algorithmic checklist:
+
+1. **State Retrieval:** Queries the source API to download the complete state of the client's project.
+2. **Health Check:** Validates the state for known issues (e.g., VMs in transitioning states or missing gateway IPs).
+3. **Soft Limitation Warning:** Flags non-critical limitations and prompts the operator to accept the risks.
+4. **State Compilation:** Compiles a clean Target State file suitable for import into the Sprut database.
+5. **Sprut Discovery:** Analyzes the current state of the project in the Sprut SDN (if any prior resources exist) and backs it up.
+6. **External Network Mapping:** Identifies external subnets to correctly remap Floating IPs and external gateways.
+7. **Execution Plan Generation:** Compiles and outputs the strict sequence of transfer operations.
+8. **Anomaly Detection:** Halts and alerts the operator if unknown entities exist in the Sprut target destination.
+9. **Conflict Resolution:** Alerts the operator if UUID conflicts are detected between Neutron and Sprut.
+10. **Logical Execution:** Commits the migration to the databases. If the default security group ID differs, it forcefully recreates it to match the Neutron UUID.
+11. **Retry Mechanism:** If the logical migration drops a connection, the script is fully idempotent and can be safely re-run with the same arguments.
+12. **Physical Execution:** Triggers the `sdn_dp_migrator` to perform the Southbound `tap` interface hot-swap.
+13. **Consistency Enforcement:** Triggers the Nova Live Migration to rewrite the `libvirt` XML and finalize the transition.
 
 ## IV. The Client-Level Migration: Safe Tooling for VIPs
 
