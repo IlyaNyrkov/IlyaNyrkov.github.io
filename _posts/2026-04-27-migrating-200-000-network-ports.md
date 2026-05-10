@@ -115,9 +115,31 @@ This state machine philosophy maps directly onto the architecture of a Software-
 
 When deciding how to migrate the network, we had to choose which interface level to target.
 
+### The Universal Mechanics of an SDN Migration
+
+Before detailing the specific execution paths, it is crucial to understand what "migrating" virtual machines to a new network actually means. 
+
+Despite existing in the same cloud, Neutron and Sprut do not share a common backend. Each SDN is an entirely isolated service with its own database, its own resource space, and its own operational principles. Therefore, you cannot simply update a database flag to transition a network from Neutron to Sprut. 
+
+Regardless of whether you use the Northbound API or Southbound database hacks, the fundamental physical reality of the migration requires a three-step cloning process:
+
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/basic_port_migration.png" alt="Basic port migration" />
+  <figcaption>
+    <strong>Fig. 4.</strong> Basic port cloud networking port migration.
+  </figcaption>
+</figure>
+
+
+1.  **The Original State:** The virtual machine is actively connected to the legacy Neutron network, serving traffic.
+2.  **Cloning the Target State:** A parallel, isolated duplicate of the network infrastructure is created in the Sprut SDN. This includes matching subnets, security groups, virtual routers and routing rules.
+3.  **The Port Swap & Cleanup:** The VM's virtual network interface is disconnected from Neutron and forcefully reattached to the newly created Sprut network. This is the only moment during the entire process where network connectivity is lost. Once the VM is successfully operating on Sprut, the legacy Neutron resources are deleted.
+
+While this three-step physical sequence remains the same, the *method* used to execute it changes drastically depending on which SDN interface layer we target.
+
 ### The Three Paths of Migration
 
-Based on these access levels, VK Cloud defined three internal paths for migrating OpenStack tenants to the Sprut SDN.<label for="sn-5" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-5" class="margin-toggle"/><span class="sidenote">In OpenStack, a "Tenant" (or Project) is an isolated set of cloud resources, identical to an AWS Account or a GCP Project. Migration was executed strictly on a tenant-by-tenant basis.</span> It is important to note the "-level" postfix here: we are not migrating servers; we are migrating *networks* at different operational levels.
+Based on the access levels described earlier, We defined three internal paths for migrating OpenStack tenants to the Sprut SDN.<label for="sn-5" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-5" class="margin-toggle"/><span class="sidenote">In OpenStack, a "Tenant" (or Project) is an isolated set of cloud resources, identical to an AWS Account or a GCP Project. Migration was executed strictly on a tenant-by-tenant basis.</span> It is important to note the "-level" postfix here: we are not migrating servers; we are migrating *networks* at different operational levels.
 
 1.  **Client-Level Migration:** A set of actions performed exclusively through the standard, existing Northbound API (e.g., recreating a virtual router, requesting a new port, reconnecting a VM interface). This approach is the most natural, predictable, and secure. However, because new entities are created via the API, the OpenStack UUIDs of those network resources will change. The guest operating systems must adapt to the switch (e.g., renewing DHCP leases), which often requires coordination with the client.
 2.  **Server-Level Migration:** A process performed entirely on the backend by operations engineers. It utilizes service-level access, direct queries to private administrative APIs, and low-level Southbound configurations. The primary goal is for the guest VMs to "notice nothing"-UUIDs remain the same, and no client involvement is required. In theory, this is the ultimate seamless migration. In practice, achieving this safely requires monumental, customized engineering effort that often exceeds the budget and timeline of a critical migration.
@@ -159,11 +181,11 @@ Preparation diverged entirely depending on the chosen path.
 
 **Step 5: Migration Execution and Troubleshooting**
 * **Server-Level Execution:** L2/L3 engineers autonomously executed the migration using backend utilities, bypassing the Northbound API to preserve OpenStack UUIDs. If problems arose, they followed strict internal runbooks. Because this method manipulates the database directly, rolling back to Neutron in the event of a failure was strictly impossible.
-* **Client-Level Execution:** The customer's engineer executed the migration steps. During the maintenance window, the only action required was the physical port swap—disconnecting the Neutron port and attaching the pre-created Sprut port. This method's greatest strength was its rollback capability. If an obscure application-level bug appeared after moving to Sprut, we could instantly roll the VM's port back to Neutron using the same scripts.<label for="sn-6" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-6" class="margin-toggle"/><span class="sidenote">This saved us during a rare edge case where Sprut initially mishandled the dual-port connection requirements (control vs. file ports) of legacy FTP traffic. We safely rolled the affected VMs back to Neutron while our SDN developers patched Sprut.</span>
+* **Client-Level Execution:** The customer's engineer executed the migration steps. During the maintenance window, the only action required was the physical port swap-disconnecting the Neutron port and attaching the pre-created Sprut port. This method's greatest strength was its rollback capability. If an obscure application-level bug appeared after moving to Sprut, we could instantly roll the VM's port back to Neutron using the same scripts.<label for="sn-6" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-6" class="margin-toggle"/><span class="sidenote">This saved us during a rare edge case where Sprut initially mishandled the dual-port connection requirements (control vs. file ports) of legacy FTP traffic. We safely rolled the affected VMs back to Neutron while our SDN developers patched Sprut.</span>
 
-While clients could theoretically run these API scripts in parallel to migrate dozens of VMs in a few seconds, most preferred a sequential, one-VM-at-a-time approach, taking about 20 seconds per server to allow for immediate health checks. Interestingly, as the script repository matured with comprehensive documentation, a shift occurred. Large enterprise clients managing dozens of OpenStack tenants—such as Philip Morris International—became increasingly independent. Once they grew comfortable with the methodology, they began executing migrations entirely on their own, and in some cases, built specialized internal tools based on our scripts. Eventually, simply handing over the repository link was enough for many to self-serve, though our Solution Architects always remained on standby to assist if needed.
+While clients could theoretically run these API scripts in parallel to migrate dozens of VMs in a few seconds, most preferred a sequential, one-VM-at-a-time approach, taking about 20 seconds per server to allow for immediate health checks. Interestingly, as the script repository matured with comprehensive documentation, a shift occurred. Large enterprise clients managing dozens of OpenStack tenants-such as Philip Morris International-became increasingly independent. Once they grew comfortable with the methodology, they began executing migrations entirely on their own, and in some cases, built specialized internal tools based on our scripts. Eventually, simply handing over the repository link was enough for many to self-serve, though our Solution Architects always remained on standby to assist if needed.
 
-Ultimately, every successful migration—regardless of the level chosen—accelerated our goal. It moved critical workloads onto a much faster, declarative SDN, while simultaneously reducing the port-count burden on the legacy Neutron database, making the cloud safer for everyone.
+Ultimately, every successful migration-regardless of the level chosen-accelerated our goal. It moved critical workloads onto a much faster, declarative SDN, while simultaneously reducing the port-count burden on the legacy Neutron database, making the cloud safer for everyone.
 
 ## III. The Server-Side Migration: Hot-Swapping the Dataplane
 
