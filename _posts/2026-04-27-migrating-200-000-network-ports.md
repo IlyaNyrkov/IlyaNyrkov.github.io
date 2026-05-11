@@ -495,7 +495,7 @@ Ultimately, migration requires maintenance windows. It requires convincing clien
 
 ### The Myth of the Universal Tool
 
-The first hurdle is internal pragmatism. When a massive architectural flaw is discovered, the initial instinct of management and engineering is to request a "perfect" universal migration tool—a backend system that moves everyone seamlessly without the client ever noticing. 
+The first hurdle is internal pragmatism. When a massive architectural flaw is discovered, the initial instinct of management and engineering is to request a "perfect" universal migration tool-a backend system that moves everyone seamlessly without the client ever noticing. 
 
 However, a cloud provider is still a business with fixed budgets, roadmaps, and limited engineering hours. An SDN migration is fundamentally a Non-Functional Requirement (NFR).<label for="sn-11" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-11" class="margin-toggle"/><span class="sidenote">A Non-Functional Requirement (NFR) defines system attributes such as performance, reliability, and maintainability. Because NFRs do not introduce new, marketable features to the end-user, it is historically difficult to convince executives to allocate massive development budgets toward them.</span> We were not adding new, marketable products; we were fixing technical debt. Furthermore, our SREs, developers, and product managers already had their standard operational workloads to manage. 
 
@@ -505,13 +505,13 @@ Dedicating the massive budget and time required to develop a flawless, universal
 
 The amplifying factor that broke this internal hesitation was the Full Sync disaster. A power loss that lasted only a few seconds resulted in an outage that lasted nearly a day, followed by a long, painful aftermath of manual fixes.
 
-That disaster changed the math. Waiting months to develop a perfect, universal migration tool meant risking another catastrophic outage in the meantime. We needed an Agile approach. The strategy was to build the tools iteratively—starting with Public API scripts—and begin migrating the most critical ports immediately. 
+That disaster changed the math. Waiting months to develop a perfect, universal migration tool meant risking another catastrophic outage in the meantime. We needed an Agile approach. The strategy was to build the tools iteratively-starting with Public API scripts-and begin migrating the most critical ports immediately. 
 
 By migrating the largest VIP projects first, we aggressively reduced the potential blast radius of a future outage. Every tenant we successfully moved to Sprut reduced the port count in the legacy Neutron database. Furthermore, this iterative process created a continuous feedback loop. Every edge case we discovered while working directly with the clients fed valuable data back to the internal SDN developers, allowing them to refine the Server-level mass-migration tools for the rest of the cloud.
 
 ### The "Shoot the Messenger" Dynamic
 
-While the iterative approach was the correct engineering decision, it forced us into difficult conversations. After the outage, VIP clients were furiously demanding answers—and rightfully so.
+While the iterative approach was the correct engineering decision, it forced us into difficult conversations. After the outage, VIP clients were furiously demanding answers-and rightfully so.
 
 As a Lead Solution Architect, my role is to advise VIP clients on how to build highly available, scalable architectures within our cloud. I am not a member of the datacenter Operations team, and I cannot physically protect their applications from a facility power loss. However, after a major outage, the client associates *you* with the problem. You become the face of the failure.
 
@@ -561,7 +561,7 @@ However, as a former developer, I know we left a massive amount of performance o
 If I did this again, I would officially maintain a dual-track repository. I would offer the transparent Bash scripts for strict-compliance enterprise clients, and a high-performance, pre-compiled Go binary for startups and smaller clients who didn't require InfoSec audits and simply wanted the migration executed as concurrently and rapidly as possible.
 
 **2. Utilizing Migration as an "Infrastructure-as-Code" Upsell**
-While our VIPs heavily utilized Terraform, many legacy clients still relied entirely on "ClickOps"—manually building infrastructure via the web UI. This creates immense technical debt; if the engineer who built the network leaves the company, the infrastructure becomes a fragile black box that no one knows how to manage or restore if it breaks.
+While our VIPs heavily utilized Terraform, many legacy clients still relied entirely on "ClickOps"-manually building infrastructure via the web UI. This creates immense technical debt; if the engineer who built the network leaves the company, the infrastructure becomes a fragile black box that no one knows how to manage or restore if it breaks.
 
 Instead of simply executing a 1-to-1 migration of this undocumented infrastructure, we should have utilized our Professional Services team to turn this mandate into an IaC modernization campaign. There are tools capable of reverse-engineering existing OpenStack infrastructure via the API and generating raw Terraform code (I actually authored an internal guide for our VK Cloud team on how to do this). 
 
