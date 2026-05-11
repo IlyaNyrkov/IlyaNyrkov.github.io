@@ -40,10 +40,10 @@ The engineering solution was VK Cloud's proprietary SDN, "Sprut." By abandoning 
 
 When global hyperscalers execute these foundational upgrades, their standard playbook is to externalize the labor and risk. To be fair, at their scale, there is rarely another option. They set a date, provide a script, and tell the customer: *"Figure it out, or lose support."* Here are historical cases of hyperscalers handling major migrations similar to VK Cloud's:
 
-1. **AWS: The Retirement of EC2-Classic:** In August 2021, AWS announced the deprecation of their original flat network, EC2-Classic. While they provided an automation runbook, AWS explicitly required customers to hunt down their legacy resources, run the scripts, rewrite security groups, and absorb the downtime themselves. There was no managed tool for smoothly replacing a VM's underlying network without causing that VM to become unavailable for an extended period.
-2. **Google Cloud: Legacy Networks to VPCs:** GCP's deprecation of their subnet-less "Legacy Networks" is perhaps the starkest contrast to a managed migration. Because legacy networks spanned multiple regions by default, Google's official documentation literally states: *"There is no automated solution to convert multiple regions... Recreate your resources with the same configurations... Delete your old resources."* Enterprise customers were told to build a new network from scratch. For a large enterprise, this is incredibly problematic because different departments typically have varying subnetwork architectures. If the legacy network isn't perfectly documented (which is almost always the case), it is almost impossible to execute this manually without errors.
-3. **Azure: ASM to ARM Control Plane Shift:** Azure’s shift from Azure Service Management (Classic) to Azure Resource Manager (ARM) forced a massive architectural change. Customers were given hard deadlines to migrate via PowerShell workflows. Crucially, any legacy automation scripts written for the ASM API became useless and had to be completely rewritten into ARM JSON templates.
-4. **AWS: Xen to Nitro Hypervisor Swap:** Moving from legacy Xen to the hardware-offloaded Nitro system required deep OS-level changes. The AWS migration runbook details brutal prerequisites: updating ENA network drivers, editing `/etc/fstab` to use UUIDs, and modifying GRUB boot parameters. If a client's custom Linux kernel wasn't prepared, the migration simply failed.
+1. **AWS: The Retirement of EC2-Classic:** In August 2021, AWS announced the deprecation of their original flat network, [EC2-Classic](https://aws.amazon.com/de/blogs/aws/ec2-classic-is-retiring-heres-how-to-prepare/). While they provided an automation runbook, AWS explicitly required customers to hunt down their legacy resources, run the scripts, rewrite security groups, and absorb the downtime themselves. There was no managed tool for smoothly replacing a VM's underlying network without causing that VM to become unavailable for an extended period.
+2. **Google Cloud: Legacy Networks to VPCs:** GCP's deprecation of their subnet-less "Legacy Networks" is perhaps the starkest contrast to a managed migration. Because legacy networks spanned multiple regions by default, Google's [official documentation](https://cloud.google.com/vpc/docs/using-legacy) literally states: *"There is no automated solution to convert multiple regions... Recreate your resources with the same configurations... Delete your old resources."* Enterprise customers were told to build a new network from scratch. For a large enterprise, this is incredibly problematic because different departments typically have varying subnetwork architectures. If the legacy network isn't perfectly documented (which is almost always the case), it is almost impossible to execute this manually without errors.
+3. **Azure: ASM to ARM Control Plane Shift:** Azure’s shift from Azure Service Management (Classic) to Azure Resource Manager (ARM) forced a massive architectural change. Customers were given [hard deadlines](https://learn.microsoft.com/en-us/answers/questions/978052/as-microsoft-azure-announced-they-are-going-to-sto) to migrate via PowerShell workflows. Crucially, any legacy automation scripts written for the ASM API became useless and had to be completely rewritten into ARM JSON templates.
+4. **AWS: Xen to Nitro Hypervisor Swap:** Moving from legacy Xen to the hardware-offloaded Nitro system required deep OS-level changes. The AWS [migration runbook](https://docs.aws.amazon.com/systems-manager-automation-runbooks/latest/userguide/automation-awssupport-migrate-xen-to-nitro.html) details brutal prerequisites: updating ENA network drivers, editing `/etc/fstab` to use UUIDs, and modifying GRUB boot parameters. If a client's custom Linux kernel wasn't prepared, the migration simply failed.
 
 The consistent thread across all of these cases is the transfer of operational burden. The downtime, the troubleshooting of edge cases, and the overall migration strategy development were dumped squarely onto the clients' Operations teams.
 
@@ -68,7 +68,7 @@ However, modern SDNs also introduced new complexities:
 
 ### The VK Cloud Difference: A Partnership Approach
 
-As noted earlier, international hyperscalers operate at a magnitude that makes personalized migrations nearly impossible. When AWS shut down EC2-Classic, they were coordinating the migration of 15 years of technical debt across millions of active servers. At that scale, automated self-service is the only viable path.
+As noted earlier, international hyperscalers operate at a magnitude that makes personalized migrations nearly impossible. When AWS shut down EC2-Classic, they were coordinating the migration of 15 years of technical debt across [millions of active servers](https://www.cloudzero.com/blog/aws-data-center-locations/#:~:text=How%20many%20data%20centers%20does,across%20its%20global%20data%20centers). At that scale, automated self-service is the only viable path.
 
 However, for a regional hyperscaler like VK Cloud (managing several data centers across Russia and Kazakhstan), telling a massive enterprise client to "recreate your resources on your own" is unacceptable.
 
@@ -420,7 +420,7 @@ curl_response=$(curl -s -X POST "${sprut_api_base}/vpn/ipsec-site-connections" \
 
 ```
 
-Arguably the most complex entity to map was the Load Balancer (LBaaS). OpenStack Octavia load balancers are provisioned as active/standby "Amphora" VMs. Because spinning up these VMs takes time, we split the logic into two scripts. First, [`copy-loadbalancer.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/copy-loadbalancer.sh) pre-provisions the heavy Amphora instances on Sprut days before the maintenance window. Later, [`copy-loadbalancer-rules.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/copy-loadbalancer-rules.sh) is executed during the downtime to instantly attach the migrated backend VMs to the new Sprut load balancer pools.
+Arguably the most complex entity to map was the [Load Balancer (LBaaS)](https://github.com/vk-cs/neutron-2-sprut/blob/main/docs/scripts/copy-loadbalancer.md). OpenStack Octavia load balancers are provisioned as active/standby "Amphora" VMs. Because spinning up these VMs takes time, we split the logic into two scripts. First, [`copy-loadbalancer.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/copy-loadbalancer.sh) pre-provisions the heavy Amphora instances on Sprut days before the maintenance window. Later, [`copy-loadbalancer-rules.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/copy-loadbalancer-rules.sh) is executed during the downtime to instantly attach the migrated backend VMs to the new Sprut load balancer pools.
 
 ### Platform Services (PaaS)
 
@@ -428,7 +428,7 @@ Migrating PaaS instances (like Managed Kubernetes or DBaaS) presents a unique ch
 
 To migrate PaaS safely, the client must use the native PaaS backup/restore tools (e.g., Velero for Kubernetes) to spin up a completely new instance directly on the Sprut network. 
 
-<figure class="center-caption">
+<figure class="fullwidth center-caption">
   <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/paas_migration.png" alt="PaaS Migration Networking Scenario" />
   <figcaption>
     <strong>Fig. 15.</strong> Resolving connectivity when PaaS instances and VMs reside in the same subnets.
@@ -445,9 +445,9 @@ The final hurdle of the Client-level migration was Infrastructure-as-Code (IaC).
 
 For massive clients like Uchi.ru, deleting and recreating thousands of resources via Terraform was operationally impossible. While our scripts successfully migrated the physical network, Terraform was completely unaware of the changes. If a client ran `terraform apply` after our scripts finished, Terraform would detect that the VM was no longer attached to the Neutron port defined in its code, and it would violently attempt to recreate the VM to "fix" the discrepancy.
 
-Terraform, like the cloud itself, is a state machine. To prevent catastrophic recreations, we had to manually manipulate the `.tfstate` file to force it to recognize the new Sprut UUIDs.
+Terraform, like the cloud itself, is a state machine. To prevent recreation of the whole infrastructure, we had to manually manipulate the `.tfstate` file to force it to recognize the new Sprut UUIDs.
 
-To automate this surgery, I wrote [`modify_terraform_state.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/modify_terraform_state.sh). The client updates their `.tf` files to declare `sdn = "sprut"` on their network resources. The script then executes a sequence of `terraform state rm` (to untrack the old Neutron ports) and `terraform import` commands to pull the newly generated Sprut UUIDs directly into the local state file.
+To automate this, I wrote [`modify_terraform_state.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/modify_terraform_state.sh). The client updates their `.tf` files to declare `sdn = "sprut"` on their network resources. The script then executes a sequence of `terraform state rm` (to untrack the old Neutron ports) and `terraform import` commands to pull the newly generated Sprut UUIDs directly into the local state file.
 
 ```bash
 # Removing the legacy tracking
@@ -457,7 +457,7 @@ terraform state rm vkcs_networking_port.port_1
 terraform import vkcs_networking_port.port_1 <NEW_SPRUT_PORT_UUID>
 ```
 
-By manually updating the state file, the client regains total declarative control over their newly migrated Sprut infrastructure, completing the migration cycle with zero loss of automation.
+By manually updating the state file, the client regains declarative control over their newly migrated Sprut infrastructure, completing the migration cycle with zero loss of automation.
 
 ### The Comprehensive Migration Runbook
 
@@ -470,7 +470,7 @@ While building the underlying automation scripts is a massive engineering hurdle
   </figcaption>
 </figure>
 
-To achieve this, we developed the comprehensive flowchart shown in Figure 16, categorizing the entire migration lifecycle into four distinct, color-coded stages:
+To achieve this, I developed the comprehensive flowchart shown in Figure 16, categorizing the entire migration lifecycle into four distinct, color-coded stages:
 
 * **White (Planning & Inventory):** This is the foundational prep work. No scripts are executed here. Teams generate configurations, assess the tenant's inventory, verify quotas, and plan the migration strategy.
 * **Blue (Zero-Downtime Preparation):** This stage can be executed days or weeks in advance. Using the dependency-graphing scripts discussed earlier, engineers copy networks, subnets, routers, security groups, empty LBaaS instances, and IPsec tunnels to the Sprut SDN. Because these operations only create parallel infrastructure, they cause absolutely zero downtime to the active Neutron environment.
@@ -479,30 +479,86 @@ To achieve this, we developed the comprehensive flowchart shown in Figure 16, ca
 
 By strictly adhering to this color-coded runbook, we decoupled the complex, time-consuming API creation tasks (Blue) from the high-stress port swapping tasks (Red). This ensured that when the actual maintenance window opened, the only thing left to do was flip the switch.
 
-## V. Entity Caveats: IPsec, Advanced Routers
+## V. The Human Element: Selling Downtime to an Angry CTO
 
-* The technical realities of the migration.
+Engineering an elegant migration tool is only half the battle. The other half is business and politics. You can develop the most sophisticated Bash utilities and Server-level migration tools in the world, but due to the technical limitations of distributed systems, it is practically impossible to create a universal, zero-downtime "magic button" that covers every edge case. 
 
-* Handling Security Groups with -sprut postfixes.  
+Ultimately, migration requires maintenance windows. It requires convincing clients to briefly turn off their infrastructure. For a Solution Architect, this transforms a deeply technical networking problem into an exercise in stakeholder management, negotiation, and de-escalation.
 
-* The IPsec / Advanced Router DNAT architecture changes.
+### The Myth of the Universal Tool
 
-* The 45-second VM disconnect/reconnect window.  
+The first hurdle is internal pragmatism. When a massive architectural flaw is discovered, the initial instinct of management and engineering is to request a "perfect" universal migration tool—a backend system that moves everyone seamlessly without the client ever noticing. 
 
-## VI. The Infrastructure-as-Code Trap: Fixing Terraform State
+However, a cloud provider is still a business with fixed budgets, roadmaps, and limited engineering hours. An SDN migration is fundamentally a Non-Functional Requirement (NFR).<label for="sn-11" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-11" class="margin-toggle"/><span class="sidenote">A Non-Functional Requirement (NFR) defines system attributes such as performance, reliability, and maintainability. Because NFRs do not introduce new, marketable features to the end-user, it is historically difficult to convince executives to allocate massive development budgets toward them.</span> We were not adding new, marketable products; we were fixing technical debt. Furthermore, our SREs, developers, and product managers already had their standard operational workloads to manage. 
 
-* You can't just delete and recreate a 5,000 VM deployment.
+Dedicating the massive budget and time required to develop a flawless, universal tool using a Waterfall development methodology was a dangerous trap. It seemed like a waste of the company's most valuable resource: time.
 
-* How we allowed clients to adopt the new SDN without destroying their existing Terraform state files using terraform import
+### The Catalyst: Agility Over Waterfall
 
-## VII. The Human Element: Selling Downtime to Angry CEO and CTOs
+The amplifying factor that broke this internal hesitation was the Full Sync disaster. A power loss that lasted only a few seconds resulted in an outage that lasted nearly a day, followed by a long, painful aftermath of manual fixes.
 
-* The "Shoot the Messenger" dynamic.
+That disaster changed the math. Waiting months to develop a perfect, universal migration tool meant risking another catastrophic outage in the meantime. We needed an Agile approach. The strategy was to build the tools iteratively—starting with Public API scripts—and begin migrating the most critical ports immediately. 
 
-* Translating technical debt into executive business value.
+By migrating the largest VIP projects first, we aggressively reduced the potential blast radius of a future outage. Every tenant we successfully moved to Sprut reduced the port count in the legacy Neutron database. Furthermore, this iterative process created a continuous feedback loop. Every edge case we discovered while working directly with the clients fed valuable data back to the internal SDN developers, allowing them to refine the Server-level mass-migration tools for the rest of the cloud.
 
-## VIII. Translating technical debt into executive business value.
+### The "Shoot the Messenger" Dynamic
 
-* Key takeaways
+While the iterative approach was the correct engineering decision, it forced us into difficult conversations. After the outage, VIP clients were furiously demanding answers—and rightfully so.
 
-* What I learned, and what I would do differently today.
+As a Lead Solution Architect, my role is to advise VIP clients on how to build highly available, scalable architectures within our cloud. I am not a member of the datacenter Operations team, and I cannot physically protect their applications from a facility power loss. However, after a major outage, the client associates *you* with the problem. You become the face of the failure.
+
+When we approached these executives to propose the Sprut migration as the permanent fix, we were met with intense resistance. From the client's perspective, this was *our* problem and *our* fault. They expected a fully automated backend fix that required zero involvement from their engineers.
+
+We had to explain the reality of the cloud "black box." As an IaaS provider, we supply the virtual hardware and the network roads, but we do not look inside the guest virtual machines.<label for="sn-12" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-12" class="margin-toggle"/><span class="sidenote">This is a core tenet of the Cloud Shared Responsibility Model. The provider secures the infrastructure <em>of</em> the cloud, but the customer secures and configures the workloads <em>in</em> the cloud. Bypassing the client to manually alter networking paths violates this boundary.</span> We cannot foresee every custom routing table, legacy OS requirement, or specialized application configuration. Attempting to force a universal backend migration without their collaborative involvement risked silently breaking their applications and causing another outage.
+
+Even the largest global hyperscalers do not take on this risk; as discussed in Chapter I, they simply enforce a deadline and force the customer to figure it out. But a "cold, do-it-yourself" approach is unacceptable when dealing with an angry VIP client who just suffered an outage. 
+
+### Translating Technical Debt into Business Value
+
+To successfully sell the downtime to a skeptical CTO, you cannot simply say, *"Please allocate your engineers so we can fix our backend technical debt."* You must translate the migration into tangible business value for *them*.
+
+My sole goal during these de-escalations was to help the customer's business. We shifted the narrative away from the past outage and focused entirely on the future capabilities they were unlocking:
+* **Speed:** We demonstrated that Sprut would make their Terraform CI/CD pipelines execute 80% faster, saving developer time.
+* **New Features:** We showed them how the new "Advanced Router" with BGP capabilities would unlock hybrid-cloud architectures they previously couldn't achieve.
+* **Ultimate Reliability:** We provided technical audits proving that moving to the new declarative SDN made them mathematically immune to the message-queue failures that caused the previous outage.
+
+We backed up this pitch with extreme "white-glove" support. We didn't just hand them the scripts. We conducted dedicated webinars, provided comprehensive guides, hosted personal meetings, and built customized test stands so their engineers could practice the migration safely.
+
+This collaborative approach completely transformed the dynamic. As we iteratively refined the tools and the documentation grew, a remarkable shift occurred. The friction disappeared. Many of our largest VIP clients became so comfortable with the scripts and the newfound stability of the Sprut SDN that they began independently migrating their remaining projects without our supervision. We turned a crisis of confidence into a successful, collaborative infrastructure overhaul.
+
+## VI. Conclusion & Retrospective
+
+Migrating 200,000 network ports across 160,000 virtual machines was a massive test of distributed systems architecture, risk management, and client communication. 
+
+As of writing this article, approximately three years have passed since the original "Full Sync" disaster that catalyzed this project. Since completing the migration and fully depreciating legacy Neutron, VK Cloud has not experienced a single major networking outage of that scale. The declarative REST architecture of Sprut proved its worth, fundamentally stabilizing the hyperscale environment.
+
+Looking back at the project, there are several critical architectural and operational takeaways that apply to any massive infrastructure overhaul, whether you are managing 10,000 nodes or 1,000,000:
+
+### Key Architectural Takeaways
+
+1. **The "Blast Radius" Strategy is Faster Than "Complete Migration":** In hyperscale, you do not need to migrate 100% of your users to stop a cascading failure. By targeting our top-tier VIP clients first, we migrated the workloads that consumed the vast majority of the network ports. This instantly relieved the pressure on the legacy Neutron database, meaning our VIP migrations effectively saved the legacy users who were still waiting in the queue.
+2. **The Cloud is a State Machine; Respect the API:** Backend database hacks (Server-level migrations) are tempting because they are fast and preserve UUIDs. However, at scale, edge cases can potentially cause another outage. Utilizing the Public API (Client-level migrations) is the only way to mathematically guarantee that the physical infrastructure and the logical database remain synchronized through the cloud's native validation checks.
+3. **Migrate the State File:** You can physically rewire a datacenter, but if you do not provide a mechanism to patch the client's Infrastructure-as-Code state files (like our `.tfstate` modifier script), you have essentially destroyed their automation. A modern cloud migration is only successful if the client's IaC survives it.
+4. **Enterprise Autonomy is the Ultimate Scalability:** You cannot scale a migration if a Solution Architect has to manually hold the hand of every client. By building transparent tools and thorough runbooks, you empower massive organizations to self-serve. Watching enterprise giants like Philip Morris independently migrate their own tenants using our scripts was the ultimate validation of our tooling.
+
+### Retrospective: What I Would Do Differently Today
+
+While the migration was a success, hindsight offers a clearer view of the operational friction we faced. If I were to architect this migration program again today, there are two distinct strategic changes I would implement.
+
+**1. A "Dual-Track" Tooling Architecture (Go + Bash)**
+Because this tool was designed to be executed by the client's DevOps engineers on their own jump hosts, we strictly used Bash and `curl` to avoid dependency management issues (like Python virtual environments). More importantly, Bash is transparent; an enterprise InfoSec team can read and approve a Bash script in minutes. 
+
+However, as a former developer, I know we left a massive amount of performance on the table. Later in my tenure, I wrote our internal infrastructure auditing tools in Go (Golang), which allowed for vastly superior error handling, concurrent API execution, and native JSON parsing without external dependencies. 
+
+If I did this again, I would officially maintain a dual-track repository. I would offer the transparent Bash scripts for strict-compliance enterprise clients, and a high-performance, pre-compiled Go binary for startups and smaller clients who didn't require InfoSec audits and simply wanted the migration executed as concurrently and rapidly as possible.
+
+**2. Utilizing Migration as an "Infrastructure-as-Code" Upsell**
+While our VIPs heavily utilized Terraform, many legacy clients still relied entirely on "ClickOps"—manually building infrastructure via the web UI. This creates immense technical debt; if the engineer who built the network leaves the company, the infrastructure becomes a fragile black box that no one knows how to manage or restore if it breaks.
+
+Instead of simply executing a 1-to-1 migration of this undocumented infrastructure, we should have utilized our Professional Services team to turn this mandate into an IaC modernization campaign. There are tools capable of reverse-engineering existing OpenStack infrastructure via the API and generating raw Terraform code (I actually authored an internal guide for our VK Cloud team on how to do this). 
+
+We could have approached these clients with a combined offer: *"Instead of just migrating your ports, our Professional Services team will migrate your entire infrastructure into a fully codified Terraform repository on the new SDN."* It would have been a significantly easier sell to CTOs. Not only would they get the performance benefits of Sprut, but they would immediately eliminate their "ClickOps" technical debt, making their cloud operations exponentially safer and easier to manage going forward.
+
+***
+
+Replacing the foundational component like SDN of a live public cloud is a difficult task, and standard industry practice usually dictates externalizing work directly onto the customer. By treating the cloud as a strict state machine, graphing our dependencies, and focusing on collaborative tooling rather than forced deprecation, we proved that hyperscale infrastructure upgrades do not have to come at the cost of your clients' trust.
