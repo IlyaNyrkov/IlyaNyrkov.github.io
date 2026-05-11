@@ -15,7 +15,15 @@ This post details experience gained in this massive project. We will break it do
 
 ## Table of Contents
 
-## I. Reality of Major Public Cloud Migrations
+* [I. Reality of Major Public Cloud Migrations](#i-reality)
+* [II. The Philosophy of Migration: State Machines vs. Database Intervention](#ii-migration-philosophy)
+* [III. The Server-Level Migration: Hot-Swapping the Dataplane](#iii-server-level-migration)
+* [IV. The Client-Level Migration: Safe Tooling for VIPs](#iv-client-level-migration)
+* [V. The Human Element: Selling Downtime to an Angry CTO](#v-human-element)
+* [VI. Conclusion & Retrospective](#vi-conclusion)
+* [VII. References & Further Reading](#vii-references)
+
+## I. Reality of Major Public Cloud Migrations {#i-reality}
 
 Replacing the underlying network or control plane of a live cloud is a monumental engineering challenge. It is a high-risk maneuver that vendors avoid for as long as possible, yet the physics of hyperscale growth eventually force everyone's hand. To understand the operational reality of our migration, we first need to look at why these migrations happen and how the rest of the industry handles them.
 
@@ -79,7 +87,7 @@ My team and I sat directly with their engineers. We developed the [Public API-ba
 This migration required late-night maintenance windows, manipulating Terraform state files, and convincing CTOs that a brief 20-second network disconnect for their VMs was a necessary trade-off for the long-term survival and speed of their infrastructure.
 
 
-## II. The Philosophy of Migration: State Machines vs. Database Intervention
+## II. The Philosophy of Migration: State Machines vs. Database Intervention {#ii-migration-philosophy}
 
 Before writing a single script or scheduling a maintenance window, we had to determine the architectural philosophy of the migration. When moving 200,000 virtual ports, the decision of *how* to interact with the cloud-via public APIs or through direct database manipulation-dictates the entire risk profile of the project.
 
@@ -187,7 +195,7 @@ While clients could theoretically run these API scripts in parallel to migrate d
 
 Ultimately, every successful migration-regardless of the level chosen-accelerated our goal. It moved critical workloads onto a much faster, declarative SDN, while simultaneously reducing the port-count burden on the legacy Neutron database, making the cloud safer for everyone.
 
-## III. The Server-Level Migration: Hot-Swapping the Dataplane
+## III. The Server-Level Migration: Hot-Swapping the Dataplane {#iii-server-level-migration}
 
 While the Client-level migration utilizing the Northbound API was the safest route for our VIPs, it required active coordination and client engineering effort. For the thousands of smaller tenants remaining in the cloud, we needed a completely invisible backend solution. This is the Server-level migration. 
 
@@ -312,7 +320,7 @@ To successfully safely manage this across thousands of tenants, the complete Ser
 12. **Physical Execution:** Triggers the `sdn_dp_migrator` to perform the Southbound `tap` interface hot-swap.
 13. **Consistency Enforcement:** Triggers the Nova Live Migration to rewrite the `libvirt` XML and finalize the transition.
 
-## IV. The Client-Level Migration: Safe Tooling for VIPs
+## IV. The Client-Level Migration: Safe Tooling for VIPs {#iv-client-level-migration}
 
 While the internal backend tools were efficient for smaller workloads, the sheer complexity of our VIP clients' environments demanded a different approach. We needed surgical tools that respected the OpenStack state machine, utilized the public APIs, and could be audited and executed directly by the client's engineering teams. 
 
@@ -479,7 +487,7 @@ To achieve this, I developed the comprehensive flowchart shown in Figure 16, cat
 
 By strictly adhering to this color-coded runbook, we decoupled the complex, time-consuming API creation tasks (Blue) from the high-stress port swapping tasks (Red). This ensured that when the actual maintenance window opened, the only thing left to do was flip the switch.
 
-## V. The Human Element: Selling Downtime to an Angry CTO
+## V. The Human Element: Selling Downtime to an Angry CTO {#v-human-element}
 
 Engineering an elegant migration tool is only half the battle. The other half is business and politics. You can develop the most sophisticated Bash utilities and Server-level migration tools in the world, but due to the technical limitations of distributed systems, it is practically impossible to create a universal, zero-downtime "magic button" that covers every edge case. 
 
@@ -526,7 +534,7 @@ We backed up this pitch with extreme "white-glove" support. We didn't just hand 
 
 This collaborative approach completely transformed the dynamic. As we iteratively refined the tools and the documentation grew, a remarkable shift occurred. The friction disappeared. Many of our largest VIP clients became so comfortable with the scripts and the newfound stability of the Sprut SDN that they began independently migrating their remaining projects without our supervision. We turned a crisis of confidence into a successful, collaborative infrastructure overhaul.
 
-## VI. Conclusion & Retrospective
+## VI. Conclusion & Retrospective {#vi-conclusion}
 
 Migrating 200,000 network ports across 160,000 virtual machines was a massive test of distributed systems architecture, risk management, and client communication. 
 
@@ -562,3 +570,20 @@ We could have approached these clients with a combined offer: *"Instead of just 
 ***
 
 Replacing the foundational component like SDN of a live public cloud is a difficult task, and standard industry practice usually dictates externalizing work directly onto the customer. By treating the cloud as a strict state machine, graphing our dependencies, and focusing on collaborative tooling rather than forced deprecation, we proved that hyperscale infrastructure upgrades do not have to come at the cost of your clients' trust.
+
+## VII. References & Further Reading {#vii-references}
+
+The operational strategies, tooling methodologies, and historical context discussed in this article are synthesized from hands-on hyperscale engineering experience and the following resources.
+
+**VK Cloud SDN Migration Tools & Architecture**
+* [Surviving 200,000 Ports: Why OpenStack Neutron Breaks at Hyperscale](https://ilyanyrkov.github.io/2026/04/17/surviving-200k-ports-why-openstack-neutron-breaks-at-hyperscale/) *(Ilya Nyrkov)* – The precursor to this post, detailing the mathematical bottlenecks of legacy message queues, the "Full Sync" disaster, and the architectural shift to the declarative Sprut SDN.
+* [VK Cloud: neutron-2-sprut Migration Repository](https://github.com/vk-cs/neutron-2-sprut/tree/main) *(GitHub)* – The complete open-source suite of Bash-based API migration tools, dependency graphing scripts (IPsec, LBaaS), and Terraform test stands developed for the VIP client migrations.
+
+**Hyperscaler Network & Control Plane Migrations**
+* [EC2-Classic is Retiring – Here’s How to Prepare](https://aws.amazon.com/blogs/aws/ec2-classic-is-retiring-heres-how-to-prepare/) *(AWS News Blog)* – The timeline and standard industry playbook for Amazon's deprecation of their original flat network architecture.
+* [Using Legacy Networks](https://cloud.google.com/vpc/docs/using-legacy) *(Google Cloud Documentation)* – Official documentation highlighting the manual "recreate your resources" approach required for enterprise multi-region legacy network deprecation on GCP.
+* [Automation: AWSSupport-MigrateXenToNitro](https://docs.aws.amazon.com/systems-manager-automation-runbooks/latest/userguide/automation-awssupport-migrate-xen-to-nitro.html) *(AWS Systems Manager Docs)* – The technical runbook detailing the strict OS-level prerequisites and drivers required for swapping a live hypervisor backend.
+
+**Infrastructure-as-Code & State Management**
+* [Terraform CLI: Manipulating State](https://developer.hashicorp.com/terraform/cli/commands/state) *(HashiCorp Developer)* – The official documentation for the `terraform state rm` and `terraform import` operations utilized to preserve client automation frameworks during the backend SDN swap.
+* [OpenStack Command-Line Interface Reference](https://docs.openstack.org/python-openstackclient/latest/cli/) *(OpenStack Docs)* – The primary Northbound API interactions used to safely orchestrate the VM port swaps without corrupting the cloud state machine.
