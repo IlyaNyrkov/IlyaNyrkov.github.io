@@ -390,7 +390,7 @@ As illustrated in the Entity Relation Diagram (Figure 13), when you query the AP
 If you attempt to create the top-level IPsec tunnel on the destination SDN before creating its child policies, the API will reject the request. Therefore, the migration algorithm must collect data top-down, but execute creation bottom-up.
 
 <figure class="center-caption">
-  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/" alt="IPsec Migration Algorithm" />
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/ipcsec-migration-stages.png" alt="IPsec Migration Algorithm" />
   <figcaption>
     <strong>Fig. 14.</strong> The 4-stage algorithm for migrating complex services (IPsec example).
   </figcaption>
@@ -463,14 +463,14 @@ By manually updating the state file, the client regains total declarative contro
 
 While building the underlying automation scripts is a massive engineering hurdle, safely executing them across 200,000 ports requires strict operational discipline. You cannot rely on ad-hoc decision-making during a live infrastructure swap. Just as technical support uses strict runbooks to resolve incidents, we needed to design a definitive "Workbook" for the client-level migration. Each step needed to be clear, sequential, and entirely unambiguous so that any vendor engineer or client DevOps team could follow it flawlessly.
 
-<figure class="center-caption">
-  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/comprehensive_sdn_migration_diagram.png" alt="Comprehensive OpenStack Tenant Migration Workflow" style="width: 100%; max-width: 1000px; display: block; margin: 0 auto;" />
+<figure class="fullwidth center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/comprehensive_sdn_migration_diagram.png" alt="Comprehensive OpenStack Tenant Migration Workflow" />
   <figcaption>
-    <strong>Fig. 15.</strong> The end-to-end operational runbook for migrating a complete OpenStack tenant.
+    <strong>Fig. 16.</strong> The end-to-end operational runbook for migrating a complete OpenStack tenant.
   </figcaption>
 </figure>
 
-To achieve this, we developed the comprehensive flowchart shown in Figure 15, categorizing the entire migration lifecycle into four distinct, color-coded stages:
+To achieve this, we developed the comprehensive flowchart shown in Figure 16, categorizing the entire migration lifecycle into four distinct, color-coded stages:
 
 * **White (Planning & Inventory):** This is the foundational prep work. No scripts are executed here. Teams generate configurations, assess the tenant's inventory, verify quotas, and plan the migration strategy.
 * **Blue (Zero-Downtime Preparation):** This stage can be executed days or weeks in advance. Using the dependency-graphing scripts discussed earlier, engineers copy networks, subnets, routers, security groups, empty LBaaS instances, and IPsec tunnels to the Sprut SDN. Because these operations only create parallel infrastructure, they cause absolutely zero downtime to the active Neutron environment.
