@@ -338,7 +338,7 @@ Bash scripts utilizing standard CLI commands are transparent. A client engineer 
 ### The Core Mechanics: Migrating the VM Port
 
 <figure class="center-caption">
-  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/sequence_of_swapping_ports.png alt="Port Migration Logic" />
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/sequence_of_swapping_ports.png" alt="Port Migration Logic" />
   <figcaption>
     <strong>Fig. 12.</strong> The sequence of swapping a virtual interface.
   </figcaption>
@@ -346,7 +346,7 @@ Bash scripts utilizing standard CLI commands are transparent. A client engineer 
 
 The foundation of the migration is the virtual machine port swap. One of the greatest advantages of OpenStack is the ability to create a networking port with a specifically requested MAC and IP address. This capability is the linchpin of our strategy, as it allows us to swap the underlying network without forcing the guest OS to reconfigure its internal network interfaces (e.g., `netplan` or `systemd-networkd`). The only action required by the guest OS post-migration is a simple DHCP renewal (`dhclient`).
 
-We iterated through several versions of this core script. The initial proof-of-concept, [`migrator.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/migrator.sh), was highly interactive, prompting the user for the VM name and destination subnets. While it proved the methodology was safe, interactivity is an anti-pattern for mass automation.
+We iterated through several versions of this core script. The initial proof-of-concept, [`migrator.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/migrator.sh), was interactive, prompting the user for the VM name and destination subnets. While it proved the methodology was safe, interactivity is an anti-pattern for mass automation.
 
 The production version, [`migrator-multiple.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/migrator-multiple.sh), accepts a CSV configuration file and processes VMs sequentially. Crucially, it includes idempotency checks. If a migration fails mid-execution, the pre-created ports are not deleted; the script can simply be re-run, detect the existing resources, and pick up where it left off.
 
@@ -378,14 +378,28 @@ Migrating flat networks and basic VMs is trivial. The true complexity of a clien
 
 To automate the migration of a complex service, you must execute strict **Dependency Graphing**.
 
-When you query the API for an `IPSEC SITE CONNECTION`, the response doesn't just contain flat strings (like the Pre-Shared Key). It contains IDs referencing other discrete OpenStack entities (e.g., `ikepolicy_id`, `ipsecpolicy_id`, `local_ep_group_id`). Those child entities must be queried, and they often contain their own dependencies.
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/entity_relation_diagram_ipsec.png" alt="IPsec Dependency Graph" />
+  <figcaption>
+    <strong>Fig. 13.</strong> Mapping the hierarchical dependencies of an IPsec Site Connection.
+  </figcaption>
+</figure>
+
+As illustrated in the Entity Relation Diagram (Figure 13), when you query the API for an `IPSEC SITE CONNECTION`, the response doesn't just contain string fields (like the Pre-Shared Key). It also contains IDs referencing other discrete OpenStack entities (e.g., `ikepolicy_id`, `ipsecpolicy_id`, `local_ep_group_id`, `vpnservice_id`). Those child entities must be queried, and they often contain their own dependencies. 
 
 If you attempt to create the top-level IPsec tunnel on the destination SDN before creating its child policies, the API will reject the request. Therefore, the migration algorithm must collect data top-down, but execute creation bottom-up.
 
-This dependency logic forms a universal 4-stage architecture used in almost all of our service migration scripts, as demonstrated in [`copy-ipsec-v2.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/copy-ipsec-v2.sh):
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/" alt="IPsec Migration Algorithm" />
+  <figcaption>
+    <strong>Fig. 14.</strong> The 4-stage algorithm for migrating complex services (IPsec example).
+  </figcaption>
+</figure>
+
+This dependency logic forms a universal 4-stage architecture used in almost all of our service migration scripts, as demonstrated in [`copy-ipsec-v2.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/copy-ipsec-v2.sh) and Figure 14:
 
 1. **Stage 1: Collection.** Query the source Neutron entities and all hierarchical children.
-2. **Stage 2: Target Discovery.** Query the Sprut environment to see if any of these entities have already been created (preventing duplicates).
+2. **Stage 2: Target Discovery.** Query the Sprut environment to see if any of these entities have already been created (preventing duplicates and conflicts).
 3. **Stage 3: Delta Creation.** Create the missing child objects (IKE policies, Endpoint groups) in Sprut.
 4. **Stage 4: Final Assembly.** Create the top-level IPsec connection binding the new child objects together.
 
@@ -408,13 +422,22 @@ curl_response=$(curl -s -X POST "${sprut_api_base}/vpn/ipsec-site-connections" \
 
 Arguably the most complex entity to map was the Load Balancer (LBaaS). OpenStack Octavia load balancers are provisioned as active/standby "Amphora" VMs. Because spinning up these VMs takes time, we split the logic into two scripts. First, [`copy-loadbalancer.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/copy-loadbalancer.sh) pre-provisions the heavy Amphora instances on Sprut days before the maintenance window. Later, [`copy-loadbalancer-rules.sh`](https://github.com/vk-cs/neutron-2-sprut/blob/main/copy-loadbalancer-rules.sh) is executed during the downtime to instantly attach the migrated backend VMs to the new Sprut load balancer pools.
 
-### Platform Services (PaaS) and BGP Routing
+### Platform Services (PaaS)
 
 Migrating PaaS instances (like Managed Kubernetes or DBaaS) presents a unique challenge. Because PaaS orchestration engines (like Magnum or Trove) maintain their own state databases that synchronize with Nova and Neutron, manually swapping the underlying network ports via scripts immediately corrupts the PaaS controller's state.
 
-To migrate PaaS safely, the client must use the native PaaS backup/restore tools (e.g., Velero for Kubernetes) to spin up a completely new instance directly on the Sprut network.
+To migrate PaaS safely, the client must use the native PaaS backup/restore tools (e.g., Velero for Kubernetes) to spin up a completely new instance directly on the Sprut network. 
 
-This introduces a routing dilemma. If half of a client's project (the VMs) is migrated to Sprut, and the other half (the PaaS cluster) remains on Neutron, how do they communicate? VK Cloud’s "Advanced Router" utilizes BGP peering to seamlessly bridge Sprut and Neutron subnets, allowing partial project migrations.A router cannot bridge two networks possessing the exact same IP address space. To utilize cross-SDN routing during a partial migration, the target Sprut network must be provisioned with a different CIDR block than the original Neutron network.
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/paas_migration.png" alt="PaaS Migration Networking Scenario" />
+  <figcaption>
+    <strong>Fig. 15.</strong> Resolving connectivity when PaaS instances and VMs reside in the same subnets.
+  </figcaption>
+</figure>
+
+This introduces a routing dilemma, highlighted in Figure 15. If a group of VMs and a PaaS instance share the same legacy subnet, moving them asynchronously breaks connectivity. If half of a client's project (the VMs) is migrated to Sprut, and the other half (the PaaS cluster) remains on Neutron, how do they communicate? 
+
+VK Cloud’s "Advanced Router" utilizes BGP peering to seamlessly bridge Sprut and Neutron subnets, allowing partial project migrations.<label for="sn-10" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-10" class="margin-toggle"/><span class="sidenote">A router cannot bridge two networks possessing the exact same IP address space. To utilize cross-SDN routing during a partial migration, the target Sprut network must be provisioned with a different CIDR block than the original Neutron network.</span> By establishing static routing on the bridge, we allowed clients to decouple their VM migrations from their heavy PaaS rebuilds, mitigating the risk of a massive "all-at-once" cutover.
 
 ### The IaC Trap: Fixing Terraform State
 
@@ -434,8 +457,27 @@ terraform state rm vkcs_networking_port.port_1
 terraform import vkcs_networking_port.port_1 <NEW_SPRUT_PORT_UUID>
 ```
 
-By surgically updating the state file, the client regains total declarative control over their newly migrated Sprut infrastructure, completing the migration cycle with zero loss of automation.
+By manually updating the state file, the client regains total declarative control over their newly migrated Sprut infrastructure, completing the migration cycle with zero loss of automation.
 
+### The Comprehensive Migration Runbook
+
+While building the underlying automation scripts is a massive engineering hurdle, safely executing them across 200,000 ports requires strict operational discipline. You cannot rely on ad-hoc decision-making during a live infrastructure swap. Just as technical support uses strict runbooks to resolve incidents, we needed to design a definitive "Workbook" for the client-level migration. Each step needed to be clear, sequential, and entirely unambiguous so that any vendor engineer or client DevOps team could follow it flawlessly.
+
+<figure class="center-caption">
+  <img src="/assets/img/2026-04-27-migrating-200-000-network-ports/comprehensive_sdn_migration_diagram.png" alt="Comprehensive OpenStack Tenant Migration Workflow" style="width: 100%; max-width: 1000px; display: block; margin: 0 auto;" />
+  <figcaption>
+    <strong>Fig. 15.</strong> The end-to-end operational runbook for migrating a complete OpenStack tenant.
+  </figcaption>
+</figure>
+
+To achieve this, we developed the comprehensive flowchart shown in Figure 15, categorizing the entire migration lifecycle into four distinct, color-coded stages:
+
+* **White (Planning & Inventory):** This is the foundational prep work. No scripts are executed here. Teams generate configurations, assess the tenant's inventory, verify quotas, and plan the migration strategy.
+* **Blue (Zero-Downtime Preparation):** This stage can be executed days or weeks in advance. Using the dependency-graphing scripts discussed earlier, engineers copy networks, subnets, routers, security groups, empty LBaaS instances, and IPsec tunnels to the Sprut SDN. Because these operations only create parallel infrastructure, they cause absolutely zero downtime to the active Neutron environment.
+* **Green (Specialized PaaS/Custom Prep):** If the tenant utilizes DBaaS, KaaS, or highly customized deployments, these clusters are rebuilt and synchronized on the newly created Sprut networks during this phase, utilizing the BGP bridging strategies mentioned above.
+* **Red (The Maintenance Window):** This is the critical downtime event. The operations team executes `migrator-multiple.sh` to forcefully hot-swap the VM ports, runs `copy-loadbalancer-rules.sh` to attach the newly migrated VMs to the Sprut load balancers, and finally runs `modify_terraform_state.sh` to update the client's IaC backend. 
+
+By strictly adhering to this color-coded runbook, we decoupled the complex, time-consuming API creation tasks (Blue) from the high-stress port swapping tasks (Red). This ensured that when the actual maintenance window opened, the only thing left to do was flip the switch.
 
 ## V. Entity Caveats: IPsec, Advanced Routers
 
