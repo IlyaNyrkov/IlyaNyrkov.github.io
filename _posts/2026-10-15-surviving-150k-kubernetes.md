@@ -15,7 +15,7 @@ This paper is an architectural post-mortem of how we re-engineered the L7 routin
 
 <div style="page-break-after: always;"></div>
 
-<img src="../assets/img/2026-10-25-150k-kubernetes/arch_diagram.png" alt="arch_diagram" style="width: 80%; height: auto;">
+<img src="/assets/img/2026-10-25-150k-kubernetes/arch_diagram.png" alt="arch_diagram" style="width: 80%; height: auto;">
 
 ### Contents
 
@@ -89,7 +89,7 @@ Under this combined onslaught of API object creation and monolithic Ingress upda
 
 To stabilize the platform without forcing the client to rewrite their application mid-launch, we re-engineered the cluster into the segmented, high-throughput architecture shown below.
 
-<img src="../assets/img/2026-10-25-150k-kubernetes/arch_diagram_numbered.png" alt="diagram" style="width: 100%; height: auto;">
+<img src="/assets/img/2026-10-25-150k-kubernetes/arch_diagram_numbered.png" alt="diagram" style="width: 100%; height: auto;">
 
 
 Here is how the end-state architecture operates from left to right, following the numbered components on the diagram:
@@ -107,7 +107,7 @@ In the sections that follow, we will look at each of these architectural zones, 
 
 ## <a id="ii-dataplane"></a>II. The Data Plane Nightmare: From a 50-Million-Line nginx.conf to contour-envoy
 
-<img src="../assets/img/2026-10-25-150k-kubernetes/ingress-migration.png" alt="ingress" style="width: 20%; height: auto;">
+<img src="/assets/img/2026-10-25-150k-kubernetes/ingress-migration.png" alt="ingress" style="width: 20%; height: auto;">
 
 
 When the client originally designed their platform for an expected 20 to 30 new tenants per day, choosing the default **`ingress-nginx`** controller was the most rational engineering decision available.
@@ -176,7 +176,7 @@ To keep the cluster stable without halting customer onboarding, we had to addres
 
 ### 1. Offloading 70,000 Helm Secrets to External PostgreSQL
 
-<img src="../assets/img/2026-10-25-150k-kubernetes/helm_secret_storage.png" alt="helm" style="width: 60%; height: auto;">
+<img src="/assets/img/2026-10-25-150k-kubernetes/helm_secret_storage.png" alt="helm" style="width: 60%; height: auto;">
 
 In a standard Kubernetes environment, Helm v3 defaults to storing release metadata inside the cluster itself (`HELM_DRIVER=secret`). Every time `helm install` or `helm upgrade` is executed, Helm serializes the rendered chart templates, values, and state into a gzipped, base64-encoded JSON blob and writes it as a Kubernetes `Secret` (`type: helm.sh/release.v1`). Crucially, to enable instant rollbacks (`helm rollback`) and A/B version testing, Helm retains up to 10 historical release revisions per deployment by default.
 
@@ -223,7 +223,7 @@ Instead, we made the architectural decision to **completely remove `limits` from
 
 ### 4. Engineering "Bare-Metal" Isolation on OpenStack/KVM
 
-![](../assets/img/2026-10-25-150k-kubernetes/dedicated_controlplane.png)
+![](/assets/img/2026-10-25-150k-kubernetes/dedicated_controlplane.png)
 
 Because OpenStack Magnum provisions Kubernetes nodes as Nova virtual machines rather than raw physical servers, we had to eliminate the "virtualization tax" on the hypervisor layer to give our 7 master VMs bare-metal performance and fault tolerance.
 
@@ -236,7 +236,7 @@ Because OpenStack Magnum provisions Kubernetes nodes as Nova virtual machines ra
 
 ## <a id="iv-managing"></a>IV. Managing the Worker Fleet: Partitioned Node Groups, Pre-Warmed Autoscaling, and Observability
 
-<img src="../assets/img/2026-10-25-150k-kubernetes/worker_node_group.png" alt="nonitor" style="width: 60%; height: auto;">
+<img src="/assets/img/2026-10-25-150k-kubernetes/worker_node_group.png" alt="nonitor" style="width: 60%; height: auto;">
 
 While the control plane and L7 ingress required architectural changes to handle metadata volume, the worker fleet faced a different challenge: **burst capacity provisioning and bin-packing efficiency**.
 
@@ -266,7 +266,7 @@ To achieve instantaneous pod scheduling while preserving cloud cost efficiency, 
 
 ### 3. Isolating the "Brains" of Observability & Fighting Alert Fatigue
 
-<img src="../assets/img/2026-10-25-150k-kubernetes/monitoring_node_group.png" alt="nonitor" style="width: 30%; height: auto;">
+<img src="/assets/img/2026-10-25-150k-kubernetes/monitoring_node_group.png" alt="nonitor" style="width: 30%; height: auto;">
 
 Monitoring a 250-node cluster requires separating **metric collection** from **metric ingestion and alerting**. To collect host-level telemetry across the fleet, lightweight agents (`prometheus-node-exporter` and `kubelet`/`cAdvisor`) must run on every single control-plane and worker node via DaemonSets. However, the heavy stateful "brains" of the monitoring stack, the **Prometheus TSDB server, Grafana, and Alertmanager**, require strict isolation.
 
