@@ -3,7 +3,6 @@ layout: post
 title: "Surviving 150,000+ Objects: Scaling Multi-Tenant Kubernetes When Every User Is a Helm Release"
 ---
 
-### Executive Overview
 
 In a standard SaaS web application, supporting **25,000 active enterprise tenants** is a solved problem, typically translating to 25,000 rows in a shared PostgreSQL cluster and a handful of stateless worker pods. 
 
