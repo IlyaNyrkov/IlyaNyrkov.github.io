@@ -3,12 +3,6 @@ layout: post
 title: "Surviving 150,000+ Objects: Scaling Multi-Tenant Kubernetes When Every User Is a Helm Release"
 ---
 
-| **Active Tenants** | **Cluster Metadata** | **Peak Onboarding** | **L7 Ingress Scale** |
-| :---: | :---: | :---: | :---: |
-| **25,000+ Namespaces** | **150,000+ K8s Objects** | **1,000–3,000 Users / Day** | **50M-Line `nginx.conf` $\rightarrow$ Envoy** |
-
----
-
 ### Executive Overview
 
 In a standard SaaS web application, supporting **25,000 active enterprise tenants** is a solved problem, typically translating to 25,000 rows in a shared PostgreSQL cluster and a handful of stateless worker pods. 
