@@ -4,9 +4,7 @@ title: "Surviving 150,000+ Objects: Scaling Multi-Tenant Kubernetes When Every U
 ---
 
 
-In a standard SaaS web application, supporting **25,000 active enterprise tenants** is a solved problem, typically translating to 25,000 rows in a shared PostgreSQL cluster and a handful of stateless worker pods. 
-
-But what happens when, to guarantee strict compute and data isolation for an embedded Business Intelligence (BI) analytics engine (Apache Superset + Trino), an engineering team provisions **an isolated Namespace and a dedicated Helm Release for every single customer**?
+In a standard SaaS web application, supporting **25,000 active enterprise tenants** is a solved problem, typically translating to 25,000 rows in a shared PostgreSQL cluster and a handful of stateless worker pods. But what happens when, to guarantee strict compute and data isolation for an embedded Business Intelligence (BI) analytics engine (Apache Superset + Trino), an engineering team provisions **an isolated Namespace and a dedicated Helm Release for every single customer**?
 
 The cluster math quickly turns adversarial:
 * **Per-Tenant Object Multiplication:** Every active customer spawns 1 Namespace, 1 Deployment, 1 ReplicaSet, 1 Pod (`512MB` Apache Superset container + `64MB` Redis sidecar), 1 Service, 1 Ingress rule, and application Secrets/ConfigMaps ($\approx$ **10–13 Kubernetes objects per user**).
